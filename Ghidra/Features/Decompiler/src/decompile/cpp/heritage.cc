@@ -16,6 +16,8 @@
 #include "heritage.hh"
 #include "funcdata.hh"
 #include "prefersplit.hh"
+#include "multiequal_trace.hh"
+#include "decomp_dbg.hh"
 
 namespace ghidra {
 
@@ -986,6 +988,9 @@ bool Heritage::protectFreeStores(AddrSpace *spc,vector<PcodeOp *> &freeStores)
 bool Heritage::discoverIndexedStackPointers(AddrSpace *spc,vector<PcodeOp *> &freeStores,bool checkFreeStores)
 
 {
+  // Set target flag for debug logging in helper functions
+  DECOMP_SET_TARGET(fd->getAddress().getOffset());
+
   // We need to be careful of exponential ladders, so we mark Varnodes independently of
   // the depth first path we are traversing.
   vector<Varnode *> markedVn;
@@ -1053,7 +1058,21 @@ bool Heritage::discoverIndexedStackPointers(AddrSpace *spc,vector<PcodeOp *> &fr
 	}
 	case CPUI_MULTIEQUAL:
 	{
-	  StackNode nextNode(outVn,curNode.offset,curNode.traversals | StackNode::multiequal);
+	  // Check if all MULTIEQUAL inputs trace back to ESP with the same offset.
+	  // If so, the output has a definite offset and we don't need to mark as uncertain
+	  uintb commonOffset;
+	  uint4 newTraversals = curNode.traversals;
+	  uintb newOffset = curNode.offset;
+
+	  if (checkMultiequalStackOffsets(op, spc, spInput, commonOffset)) {
+	    // All inputs have same offset - use the verified offset, don't set multiequal flag
+	    newOffset = commonOffset;
+	  } else {
+	    // Inputs differ or can't be traced - mark as uncertain
+	    newTraversals |= StackNode::multiequal;
+	  }
+
+	  StackNode nextNode(outVn, newOffset, newTraversals);
 	  if (nextNode.iter != nextNode.vn->endDescend()) {
 	    outVn->setMark();
 	    path.push_back(nextNode);

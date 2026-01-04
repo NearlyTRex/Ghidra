@@ -21,6 +21,7 @@ import static ghidra.program.model.pcode.ElementId.*;
 import java.io.IOException;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
+import java.util.*;
 
 import ghidra.app.cmd.function.CallDepthChangeInfo;
 import ghidra.docking.settings.SettingsImpl;
@@ -49,6 +50,328 @@ import ghidra.util.task.TaskMonitor;
 public class DecompileCallback {
 
 	public final static int MAX_SYMBOL_COUNT = 16;
+
+	// P-code override support - registered overrides keyed by funcAddr -> instrAddr -> pcodeLines
+	private static Map<Long, Map<Long, List<String>>> pcodeOverrides = new HashMap<>();
+
+	/**
+	 * Register a P-code override for a specific instruction within a function.
+	 * @param funcAddr the function entry address
+	 * @param instrAddr the instruction address to override
+	 * @param pcodeLines the P-code operation strings to use instead
+	 */
+	public static void registerPcodeOverride(long funcAddr, long instrAddr, List<String> pcodeLines) {
+		pcodeOverrides.computeIfAbsent(funcAddr, k -> new HashMap<>()).put(instrAddr, pcodeLines);
+	}
+
+	/**
+	 * Clear all registered P-code overrides.
+	 */
+	public static void clearPcodeOverrides() {
+		pcodeOverrides.clear();
+	}
+
+	/**
+	 * Check if any P-code overrides are registered.
+	 * @return true if overrides exist
+	 */
+	public static boolean hasPcodeOverrides() {
+		return !pcodeOverrides.isEmpty();
+	}
+
+	// Callfixup support - replace calls to specific functions with custom pcode
+	// Exact name matches
+	private static Map<String, List<String>> callFixups = new HashMap<>();
+	// Pattern matches (function name contains pattern)
+	private static Map<String, List<String>> callFixupPatterns = new HashMap<>();
+
+	/**
+	 * Register a callfixup for a specific function name.
+	 * When a CALL to a function with this exact name is encountered during decompilation,
+	 * the call will be replaced with the specified pcode.
+	 * @param targetFuncName the exact function name to match
+	 * @param pcodeLines the P-code operation strings to replace the call with
+	 */
+	public static void registerCallFixup(String targetFuncName, List<String> pcodeLines) {
+		callFixups.put(targetFuncName, pcodeLines);
+		Msg.info(DecompileCallback.class, "Callfixup: Registered fixup for '" + targetFuncName + "' with " + pcodeLines.size() + " pcode ops");
+	}
+
+	/**
+	 * Register a callfixup pattern. When a CALL to a function whose name contains
+	 * the pattern is encountered, the call will be replaced with the specified pcode.
+	 * @param pattern the pattern to match (case-sensitive substring match)
+	 * @param pcodeLines the P-code operation strings to replace the call with
+	 */
+	public static void registerCallFixupPattern(String pattern, List<String> pcodeLines) {
+		callFixupPatterns.put(pattern, pcodeLines);
+		Msg.info(DecompileCallback.class, "Callfixup: Registered pattern fixup for '*" + pattern + "*' with " + pcodeLines.size() + " pcode ops");
+	}
+
+	/**
+	 * Clear all registered callfixups.
+	 */
+	public static void clearCallFixups() {
+		callFixups.clear();
+		callFixupPatterns.clear();
+	}
+
+	/**
+	 * Check if any callfixups are registered.
+	 * @return true if callfixups exist
+	 */
+	public static boolean hasCallFixups() {
+		return !callFixups.isEmpty() || !callFixupPatterns.isEmpty();
+	}
+
+	/**
+	 * Find a matching callfixup for the given function name.
+	 * First checks exact matches, then pattern matches.
+	 * @param funcName the function name to look up
+	 * @return the pcode lines for the fixup, or null if no match
+	 */
+	private static List<String> findCallFixup(String funcName) {
+		// Check exact match first
+		List<String> fixup = callFixups.get(funcName);
+		if (fixup != null) {
+			return fixup;
+		}
+		// Check pattern matches
+		for (Map.Entry<String, List<String>> entry : callFixupPatterns.entrySet()) {
+			if (funcName.contains(entry.getKey())) {
+				return entry.getValue();
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * Parse a pcode operation string into a PcodeOp.
+	 * Format: OPCODE (output) = (input1), (input2), ...
+	 * Varnode format: (space,offset,size) or (space,0xoffset,size)
+	 * @param opStr the pcode operation string
+	 * @param addr the instruction address
+	 * @param seqNum the sequence number within the instruction
+	 * @param addrFactory the address factory for space lookups
+	 * @return the parsed PcodeOp, or null on error
+	 */
+	private static PcodeOp parsePcodeOp(String opStr, Address addr, int seqNum, AddressFactory addrFactory) {
+		try {
+
+			// Remove inline comments
+			int commentIdx = opStr.indexOf("/*");
+			if (commentIdx >= 0) {
+				int endComment = opStr.indexOf("*/", commentIdx);
+				if (endComment >= 0) {
+					opStr = opStr.substring(0, commentIdx) + opStr.substring(endComment + 2);
+				}
+			}
+			opStr = opStr.trim();
+
+			// Parse opcode name
+			int firstParen = opStr.indexOf('(');
+			if (firstParen < 0) {
+				return null;
+			}
+			String prefix = opStr.substring(0, firstParen).trim();
+
+			// Check for output assignment: OPCODE (output) = (inputs...)
+			int equalsIdx = opStr.indexOf('=');
+			int opcode;
+			Varnode output = null;
+			String inputsPart;
+
+			// Has output
+			if (equalsIdx > 0 && equalsIdx > firstParen) {
+				String opcodeName = prefix;
+				opcode = getOpcodeFromName(opcodeName);
+				if (opcode < 0) return null;
+
+				String outputPart = opStr.substring(firstParen, equalsIdx).trim();
+				output = parseVarnode(outputPart, addrFactory);
+
+				inputsPart = opStr.substring(equalsIdx + 1).trim();
+			}
+			else {
+				// No output (e.g., STORE, BRANCH)
+				opcode = getOpcodeFromName(prefix);
+				if (opcode < 0) return null;
+				inputsPart = opStr.substring(firstParen).trim();
+			}
+
+			// Parse inputs
+			List<Varnode> inputs = new ArrayList<>();
+			int depth = 0;
+			int start = -1;
+			for (int i = 0; i < inputsPart.length(); i++) {
+				char c = inputsPart.charAt(i);
+				if (c == '(') {
+					if (depth == 0) start = i;
+					depth++;
+				} else if (c == ')') {
+					depth--;
+					if (depth == 0 && start >= 0) {
+						String varnodeStr = inputsPart.substring(start, i + 1);
+						Varnode v = parseVarnode(varnodeStr, addrFactory);
+						if (v != null) {
+							inputs.add(v);
+						}
+						start = -1;
+					}
+				}
+			}
+
+			// Create the PcodeOp
+			SequenceNumber seq = new SequenceNumber(addr, seqNum);
+			PcodeOp op = new PcodeOp(seq, opcode, inputs.toArray(new Varnode[0]), output);
+			return op;
+		} catch (Exception e) {
+			Msg.warn(DecompileCallback.class, "P-code override: Error parsing pcode op: " + opStr + " - " + e.getMessage());
+			return null;
+		}
+	}
+
+	/**
+	 * Parse a varnode string like (register,0x10,4) or (const,0x1a1,4)
+	 */
+	private static Varnode parseVarnode(String str, AddressFactory addrFactory) {
+
+		// Parse varnode string
+		str = str.trim();
+		if (!str.startsWith("(") || !str.endsWith(")")) {
+			return null;
+		}
+		str = str.substring(1, str.length() - 1);
+		String[] parts = str.split(",");
+		if (parts.length != 3) {
+			return null;
+		}
+		String spaceName = parts[0].trim();
+		String offsetStr = parts[1].trim();
+		String sizeStr = parts[2].trim();
+		try {
+
+			// Get offset and size
+			long offset;
+			if (offsetStr.startsWith("0x") || offsetStr.startsWith("0X")) {
+				offset = Long.parseUnsignedLong(offsetStr.substring(2), 16);
+			} else {
+				offset = Long.parseUnsignedLong(offsetStr);
+			}
+			int size = Integer.parseInt(sizeStr);
+
+			// Find address space
+			AddressSpace space = addrFactory.getAddressSpace(spaceName);
+			if (space == null) {
+
+				// Try common aliases
+				if ("const".equals(spaceName)) {
+					space = addrFactory.getConstantSpace();
+				} else if ("unique".equals(spaceName)) {
+					space = addrFactory.getUniqueSpace();
+				} else if ("register".equals(spaceName)) {
+					space = addrFactory.getRegisterSpace();
+				} else if ("ram".equals(spaceName)) {
+					space = addrFactory.getDefaultAddressSpace();
+				} else if ("stack".equals(spaceName)) {
+					space = addrFactory.getStackSpace();
+				}
+			}
+			if (space == null) {
+				Msg.warn(DecompileCallback.class, "P-code override: Unknown address space: " + spaceName);
+				return null;
+			}
+
+			// Return varnode
+			Address address = space.getAddress(offset);
+			return new Varnode(address, size);
+		} catch (NumberFormatException e) {
+			Msg.warn(DecompileCallback.class, "P-code override: Error parsing varnode numbers: " + str);
+			return null;
+		}
+	}
+
+	/**
+	 * Convert pcode opcode name to integer constant.
+	 */
+	private static int getOpcodeFromName(String name) {
+		switch (name.toUpperCase()) {
+			case "COPY": return PcodeOp.COPY;
+			case "LOAD": return PcodeOp.LOAD;
+			case "STORE": return PcodeOp.STORE;
+			case "BRANCH": return PcodeOp.BRANCH;
+			case "CBRANCH": return PcodeOp.CBRANCH;
+			case "BRANCHIND": return PcodeOp.BRANCHIND;
+			case "CALL": return PcodeOp.CALL;
+			case "CALLIND": return PcodeOp.CALLIND;
+			case "CALLOTHER": return PcodeOp.CALLOTHER;
+			case "RETURN": return PcodeOp.RETURN;
+			case "INT_EQUAL": return PcodeOp.INT_EQUAL;
+			case "INT_NOTEQUAL": return PcodeOp.INT_NOTEQUAL;
+			case "INT_SLESS": return PcodeOp.INT_SLESS;
+			case "INT_SLESSEQUAL": return PcodeOp.INT_SLESSEQUAL;
+			case "INT_LESS": return PcodeOp.INT_LESS;
+			case "INT_LESSEQUAL": return PcodeOp.INT_LESSEQUAL;
+			case "INT_ZEXT": return PcodeOp.INT_ZEXT;
+			case "INT_SEXT": return PcodeOp.INT_SEXT;
+			case "INT_ADD": return PcodeOp.INT_ADD;
+			case "INT_SUB": return PcodeOp.INT_SUB;
+			case "INT_CARRY": return PcodeOp.INT_CARRY;
+			case "INT_SCARRY": return PcodeOp.INT_SCARRY;
+			case "INT_SBORROW": return PcodeOp.INT_SBORROW;
+			case "INT_2COMP": return PcodeOp.INT_2COMP;
+			case "INT_NEGATE": return PcodeOp.INT_NEGATE;
+			case "INT_XOR": return PcodeOp.INT_XOR;
+			case "INT_AND": return PcodeOp.INT_AND;
+			case "INT_OR": return PcodeOp.INT_OR;
+			case "INT_LEFT": return PcodeOp.INT_LEFT;
+			case "INT_RIGHT": return PcodeOp.INT_RIGHT;
+			case "INT_SRIGHT": return PcodeOp.INT_SRIGHT;
+			case "INT_MULT": return PcodeOp.INT_MULT;
+			case "INT_DIV": return PcodeOp.INT_DIV;
+			case "INT_SDIV": return PcodeOp.INT_SDIV;
+			case "INT_REM": return PcodeOp.INT_REM;
+			case "INT_SREM": return PcodeOp.INT_SREM;
+			case "BOOL_NEGATE": return PcodeOp.BOOL_NEGATE;
+			case "BOOL_XOR": return PcodeOp.BOOL_XOR;
+			case "BOOL_AND": return PcodeOp.BOOL_AND;
+			case "BOOL_OR": return PcodeOp.BOOL_OR;
+			case "FLOAT_EQUAL": return PcodeOp.FLOAT_EQUAL;
+			case "FLOAT_NOTEQUAL": return PcodeOp.FLOAT_NOTEQUAL;
+			case "FLOAT_LESS": return PcodeOp.FLOAT_LESS;
+			case "FLOAT_LESSEQUAL": return PcodeOp.FLOAT_LESSEQUAL;
+			case "FLOAT_NAN": return PcodeOp.FLOAT_NAN;
+			case "FLOAT_ADD": return PcodeOp.FLOAT_ADD;
+			case "FLOAT_DIV": return PcodeOp.FLOAT_DIV;
+			case "FLOAT_MULT": return PcodeOp.FLOAT_MULT;
+			case "FLOAT_SUB": return PcodeOp.FLOAT_SUB;
+			case "FLOAT_NEG": return PcodeOp.FLOAT_NEG;
+			case "FLOAT_ABS": return PcodeOp.FLOAT_ABS;
+			case "FLOAT_SQRT": return PcodeOp.FLOAT_SQRT;
+			case "FLOAT_INT2FLOAT": return PcodeOp.FLOAT_INT2FLOAT;
+			case "FLOAT_FLOAT2FLOAT": return PcodeOp.FLOAT_FLOAT2FLOAT;
+			case "FLOAT_TRUNC": return PcodeOp.FLOAT_TRUNC;
+			case "FLOAT_CEIL": return PcodeOp.FLOAT_CEIL;
+			case "FLOAT_FLOOR": return PcodeOp.FLOAT_FLOOR;
+			case "FLOAT_ROUND": return PcodeOp.FLOAT_ROUND;
+			case "FLOAT2FLOAT": return PcodeOp.FLOAT_FLOAT2FLOAT;
+			case "INT2FLOAT": return PcodeOp.FLOAT_INT2FLOAT;
+			case "TRUNC": return PcodeOp.FLOAT_TRUNC;
+			case "MULTIEQUAL": return PcodeOp.MULTIEQUAL;
+			case "INDIRECT": return PcodeOp.INDIRECT;
+			case "PIECE": return PcodeOp.PIECE;
+			case "SUBPIECE": return PcodeOp.SUBPIECE;
+			case "CAST": return PcodeOp.CAST;
+			case "PTRADD": return PcodeOp.PTRADD;
+			case "PTRSUB": return PcodeOp.PTRSUB;
+			case "POPCOUNT": return PcodeOp.POPCOUNT;
+			case "LZCOUNT": return PcodeOp.LZCOUNT;
+			case "UNIMPLEMENTED": return PcodeOp.UNIMPLEMENTED;
+			default:
+				Msg.warn(DecompileCallback.class, "P-code override: Unknown pcode opcode: " + name);
+				return -1;
+		}
+	}
 
 	/**
 	 * Data returned for a query about strings
@@ -227,6 +550,100 @@ public class DecompileCallback {
 				}
 			}
 
+			// Check for P-code override
+			if (!pcodeOverrides.isEmpty() && funcEntry != null) {
+				PcodeOp[] patchedOps = getPatchedPcode(addr, instr);
+				if (patchedOps != null) {
+					int fallthruOffset = instr.getDefaultFallThroughOffset();
+					try {
+						// First, capture what the original encoding would produce for comparison
+						PatchPackedEncode origEncoder = new PatchPackedEncode();
+						origEncoder.clear();
+						instr.getPrototype().getPcodePacked(origEncoder, instr.getInstructionContext(),
+							new InstructionPcodeOverride(instr));
+						int origSize = origEncoder.size();
+
+						// Now encode our override
+						encodeInstruction(resultEncoder, addr, patchedOps, fallthruOffset, 0, addrfactory);
+						int overrideSize = resultEncoder.size();
+						Msg.debug(this, "P-code override: Encoded override for " + addr + " successfully");
+						Msg.debug(this, "P-code override:   Original encoding size: " + origSize + " bytes");
+						Msg.debug(this, "P-code override:   Override encoding size: " + overrideSize + " bytes");
+
+						// Dump the pcode ops we're encoding for verification
+						Msg.debug(this, "P-code override:   Patched ops:");
+						for (int i = 0; i < patchedOps.length; i++) {
+							PcodeOp op = patchedOps[i];
+							StringBuilder sb = new StringBuilder();
+							sb.append("     [").append(i).append("] ");
+							sb.append(op.getMnemonic()).append(" (opcode=").append(op.getOpcode()).append(")");
+							if (op.getOutput() != null) {
+								sb.append(" out=").append(op.getOutput());
+							}
+							sb.append(" inputs=[");
+							for (int j = 0; j < op.getNumInputs(); j++) {
+								if (j > 0) sb.append(", ");
+								sb.append(op.getInput(j));
+							}
+							sb.append("]");
+							Msg.debug(this, "P-code override:" + sb);
+						}
+					} catch (Exception e) {
+						Msg.error(this, "P-code override: ENCODING FAILED for " + addr + ": " + e.getMessage(), e);
+					}
+					return;
+				}
+			}
+
+			// Check for callfixup - INJECT pcode after original call (like cspec callfixups)
+			if (hasCallFixups()) {
+				FlowType flowType = instr.getFlowType();
+				if (flowType.isCall() && !flowType.isComputed()) {
+					// This is a direct call - get the target
+					Address[] flows = instr.getFlows();
+					if (flows != null && flows.length > 0) {
+						Address targetAddr = flows[0];
+						Function targetFunc = listing.getFunctionAt(targetAddr);
+						if (targetFunc != null) {
+							String targetName = targetFunc.getName();
+							List<String> fixupPcode = findCallFixup(targetName);
+							if (fixupPcode != null) {
+								Msg.info(this, "Callfixup: Injecting fixup for call to '" + targetName + "' at " + addr);
+								try {
+									// Get original pcode from the instruction
+									PcodeOp[] originalOps = instr.getPcode();
+
+									// Parse the fixup pcode to inject
+									List<PcodeOp> injectedOps = new ArrayList<>();
+									int seqNum = originalOps.length;  // Continue sequence numbering
+									for (String line : fixupPcode) {
+										PcodeOp op = parsePcodeOp(line, addr, seqNum++, addrfactory);
+										if (op != null) {
+											injectedOps.add(op);
+										}
+									}
+
+									// Combine original + injected pcode
+									PcodeOp[] combinedOps = new PcodeOp[originalOps.length + injectedOps.size()];
+									System.arraycopy(originalOps, 0, combinedOps, 0, originalOps.length);
+									for (int i = 0; i < injectedOps.size(); i++) {
+										combinedOps[originalOps.length + i] = injectedOps.get(i);
+									}
+
+									int fallthruOffset = instr.getDefaultFallThroughOffset();
+									encodeInstruction(resultEncoder, addr, combinedOps, fallthruOffset, 0, addrfactory);
+									Msg.debug(this, "Callfixup: Encoded " + originalOps.length + " original + " +
+										injectedOps.size() + " injected ops for " + addr);
+									return;
+								} catch (Exception e) {
+									Msg.error(this, "Callfixup: INJECTION FAILED for " + addr + ": " + e.getMessage(), e);
+								}
+							}
+						}
+					}
+				}
+			}
+
 			instr.getPrototype()
 					.getPcodePacked(resultEncoder, instr.getInstructionContext(),
 						new InstructionPcodeOverride(instr));
@@ -242,6 +659,55 @@ public class DecompileCallback {
 		}
 		// If we reach here, an exception was thrown
 		resultEncoder.clear();	// Make sure the result is empty
+	}
+
+	/**
+	 * Get overridden P-code for an instruction if an override is registered.
+	 * @param addr the instruction address
+	 * @param instr the instruction
+	 * @return overridden PcodeOp array, or null if no override exists
+	 */
+	private PcodeOp[] getPatchedPcode(Address addr, Instruction instr) {
+
+		// Look up override for this function
+		long funcOffset = funcEntry.getOffset();
+		Map<Long, List<String>> funcOverrides = pcodeOverrides.get(funcOffset);
+		if (funcOverrides == null) {
+			return null;
+		}
+
+		// Check for override at this instruction address
+		long addrOffset = addr.getOffset();
+		List<String> pcodeLines = funcOverrides.get(addrOffset);
+		if (pcodeLines == null || pcodeLines.isEmpty()) {
+			// Log once per function that we found it but this instruction has no override
+			Msg.trace(this, "P-code override: func=0x" + Long.toHexString(funcOffset) + " found, instr=0x" + Long.toHexString(addrOffset) + " no override (have: " + funcOverrides.keySet() + ")");
+			return null;
+		}
+
+		// Parse the pcode operations
+		List<PcodeOp> ops = new ArrayList<>();
+		int seqNum = 0;
+		for (String line : pcodeLines) {
+			PcodeOp op = parsePcodeOp(line, addr, seqNum++, addrfactory);
+			if (op != null) {
+				ops.add(op);
+			}
+		}
+		if (ops.isEmpty()) {
+			return null;
+		}
+
+		// Print each parsed op
+		Msg.info(this, "P-code override: Using override for " + addr + " (" + ops.size() + " ops)");
+		for (int i = 0; i < ops.size(); i++) {
+			PcodeOp op = ops.get(i);
+			Msg.debug(this, "P-code override:   op[" + i + "] opcode=" + op.getOpcode() +
+				" mnemonic=" + op.getMnemonic() +
+				" output=" + (op.getOutput() != null ? op.getOutput().toString() : "null") +
+				" inputs=" + op.getNumInputs());
+		}
+		return ops.toArray(new PcodeOp[0]);
 	}
 
 	/**
