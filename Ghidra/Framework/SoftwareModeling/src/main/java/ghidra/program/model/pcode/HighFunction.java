@@ -20,7 +20,9 @@ import static ghidra.program.model.pcode.ElementId.*;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import ghidra.program.database.function.FunctionDB;
 import ghidra.program.database.symbol.CodeSymbol;
@@ -41,6 +43,64 @@ import ghidra.util.exception.InvalidInputException;
 public class HighFunction extends PcodeSyntaxTree {
 	public final static String DECOMPILER_TAG_MAP = "decompiler_tags";
 	public final static String OVERRIDE_NAMESPACE_NAME = "override";
+
+	// ========== PROTO OVERRIDE REGISTRATION ==========
+	// Static registry for prototype overrides: call site address offset -> FunctionSignature
+	// This allows injecting proto overrides without modifying the database,
+	// similar to how callfixups work in DecompileCallback.
+	private static Map<Long, FunctionSignature> registeredProtoOverrides = new HashMap<>();
+
+	/**
+	 * Register a prototype override for a specific call site address.
+	 * The override will be applied during decompilation without modifying the database.
+	 * @param callAddr the address of the call instruction (as long offset)
+	 * @param signature the FunctionSignature to use at this call site
+	 */
+	public static void registerProtoOverride(long callAddr, FunctionSignature signature) {
+		registeredProtoOverrides.put(callAddr, signature);
+	}
+
+	/**
+	 * Register a prototype override using an Address object.
+	 * @param callAddr the address of the call instruction
+	 * @param signature the FunctionSignature to use at this call site
+	 */
+	public static void registerProtoOverride(Address callAddr, FunctionSignature signature) {
+		registeredProtoOverrides.put(callAddr.getOffset(), signature);
+	}
+
+	/**
+	 * Clear all registered prototype overrides.
+	 */
+	public static void clearProtoOverrides() {
+		registeredProtoOverrides.clear();
+	}
+
+	/**
+	 * Get the number of registered prototype overrides.
+	 * @return count of registered overrides
+	 */
+	public static int getRegisteredProtoOverrideCount() {
+		return registeredProtoOverrides.size();
+	}
+
+	/**
+	 * Check if any prototype overrides are registered.
+	 * @return true if overrides are registered
+	 */
+	public static boolean hasRegisteredProtoOverrides() {
+		return !registeredProtoOverrides.isEmpty();
+	}
+
+	/**
+	 * Get all registered prototype overrides.
+	 * @return map of call address offsets to FunctionSignature overrides
+	 */
+	public static Map<Long, FunctionSignature> getRegisteredProtoOverrides() {
+		return registeredProtoOverrides;
+	}
+
+	// ========== END PROTO OVERRIDE REGISTRATION ==========
 
 	private Function func; // The traditional function object
 	private Language language;
@@ -462,20 +522,43 @@ public class HighFunction extends PcodeSyntaxTree {
 			}
 			encoder.closeElement(ELEM_JUMPTABLELIST);
 		}
-		boolean hasOverrideTag = ((protoOverrides != null) && (protoOverrides.size() > 0));
+		// Check for both DB overrides and registered overrides
+		boolean hasDbOverrides = (protoOverrides != null) && (protoOverrides.size() > 0);
+		boolean hasRegisteredOverrides = hasRegisteredProtoOverrides();
+		boolean hasOverrideTag = hasDbOverrides || hasRegisteredOverrides;
 		if (hasOverrideTag) {
 			encoder.openElement(ELEM_OVERRIDE);
 			PcodeDataTypeManager dtmanage = getDataTypeManager();
 			Program prog = func.getProgram();
-			for (DataTypeSymbol sym : protoOverrides) {
-				Address addr = sym.getAddress();
-				int firstVarArg = HighFunctionDBUtil.getFirstVarArg(prog, addr);
-				FunctionPrototype fproto = new FunctionPrototype(
-					(FunctionSignature) sym.getDataType(), compilerSpec, false);
-				encoder.openElement(ELEM_PROTOOVERRIDE);
-				AddressXML.encode(encoder, addr);
-				fproto.encodePrototype(encoder, dtmanage, firstVarArg);
-				encoder.closeElement(ELEM_PROTOOVERRIDE);
+			AddressFactory addrFactory = prog.getAddressFactory();
+
+			// Encode DB overrides first
+			if (hasDbOverrides) {
+				for (DataTypeSymbol sym : protoOverrides) {
+					Address addr = sym.getAddress();
+					int firstVarArg = HighFunctionDBUtil.getFirstVarArg(prog, addr);
+					FunctionPrototype fproto = new FunctionPrototype(
+						(FunctionSignature) sym.getDataType(), compilerSpec, false);
+					encoder.openElement(ELEM_PROTOOVERRIDE);
+					AddressXML.encode(encoder, addr);
+					fproto.encodePrototype(encoder, dtmanage, firstVarArg);
+					encoder.closeElement(ELEM_PROTOOVERRIDE);
+				}
+			}
+
+			// Encode registered overrides (injected without DB modification)
+			if (hasRegisteredOverrides) {
+				for (Map.Entry<Long, FunctionSignature> entry : registeredProtoOverrides.entrySet()) {
+					long addrOffset = entry.getKey();
+					FunctionSignature sig = entry.getValue();
+					Address addr = addrFactory.getDefaultAddressSpace().getAddress(addrOffset);
+					int firstVarArg = HighFunctionDBUtil.getFirstVarArg(prog, addr);
+					FunctionPrototype fproto = new FunctionPrototype(sig, compilerSpec, false);
+					encoder.openElement(ELEM_PROTOOVERRIDE);
+					AddressXML.encode(encoder, addr);
+					fproto.encodePrototype(encoder, dtmanage, firstVarArg);
+					encoder.closeElement(ELEM_PROTOOVERRIDE);
+				}
 			}
 			encoder.closeElement(ELEM_OVERRIDE);
 		}
