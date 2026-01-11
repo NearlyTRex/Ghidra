@@ -82,6 +82,14 @@ import ghidra.util.task.TaskMonitor;
  */
 public class DecompInterface {
 
+	/**
+	 * Decompiler fix flags - used with setDecompilerFixes() to enable per-function fixes.
+	 * These must match DecompilerFixFlags in decompiler_fixes.hh
+	 */
+	public static final int DFIX_NONE = 0;
+	/** Trace MULTIEQUAL inputs for precise stack offsets in heritage analysis */
+	public static final int DFIX_MULTIEQUAL_STACK_TRACE = 1 << 0;
+
 	public static class EncodeDecodeSet {
 		public OverlayAddressSpace overlay;		// Active overlay space or null
 		public CachedEncoder mainQuery;		// Encoder for main query to decompiler process
@@ -1120,5 +1128,46 @@ public class DecompInterface {
 			}
 		}
 		return null;
+	}
+
+	/**
+	 * Register per-function decompiler fixes for a set of function addresses.
+	 * The fixes will be applied during subsequent decompilation of these functions.
+	 * @param flags the fix flags to apply (use DFIX_* constants)
+	 * @param addresses array of function entry addresses
+	 * @return true if the command succeeded
+	 */
+	public synchronized boolean setDecompilerFixes(int flags, long[] addresses) {
+		if (decompProcess == null) {
+			return false;
+		}
+		try {
+			StringIngest response = new StringIngest();
+			decompProcess.sendSetDecompilerFixes(flags, addresses, response);
+			return response.toString().equals("t");
+		}
+		catch (Exception e) {
+			Msg.error(this, "Exception setting decompiler fixes: " + e.getMessage());
+			return false;
+		}
+	}
+
+	/**
+	 * Clear all registered per-function decompiler fixes.
+	 * @return true if the command succeeded
+	 */
+	public synchronized boolean clearDecompilerFixes() {
+		if (decompProcess == null) {
+			return false;
+		}
+		try {
+			StringIngest response = new StringIngest();
+			decompProcess.sendClearDecompilerFixes(response);
+			return response.toString().equals("t");
+		}
+		catch (Exception e) {
+			Msg.error(this, "Exception clearing decompiler fixes: " + e.getMessage());
+			return false;
+		}
 	}
 }

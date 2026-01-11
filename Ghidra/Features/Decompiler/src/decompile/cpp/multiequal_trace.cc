@@ -17,6 +17,7 @@
 /// \brief MULTIEQUAL stack offset tracing implementation
 
 #include "multiequal_trace.hh"
+#include "decompiler_fixes.hh"
 #include "decomp_dbg.hh"
 #include <set>
 
@@ -163,11 +164,11 @@ static bool traceStackOffsetBackward(Varnode *vn, AddrSpace *spc, Varnode *spInp
   }
 }
 
-bool checkMultiequalStackOffsets(PcodeOp *op, AddrSpace *spc, Varnode *spInput, uintb &commonOffset)
+bool checkMultiequalStackOffsets(PcodeOp *op, AddrSpace *spc, Varnode *spInput, uint8 funcAddr, uintb &commonOffset)
 {
-  if (!DECOMP_IS_CURRENT_TARGET()) {
-    // For non-target functions, use simpler/faster check
-    return false;  // Conservative: assume uncertain
+  // Check if the fix is enabled for this function
+  if (!DecompilerFixes::hasFix(funcAddr, DFIX_MULTIEQUAL_STACK_TRACE)) {
+    return false;  // Fix not enabled, use default behavior
   }
 
   DECOMP_LOG("checkMultiequalStackOffsets: checking MULTIEQUAL with " << op->numInput() << " inputs");

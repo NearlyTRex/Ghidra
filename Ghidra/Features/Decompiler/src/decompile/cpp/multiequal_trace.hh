@@ -31,12 +31,16 @@ namespace ghidra {
 /// if they all derive from ESP with the same constant offset. If so, the MULTIEQUAL
 /// output has a definite stack offset and doesn't need to be marked as uncertain.
 ///
+/// This function first checks if the DFIX_MULTIEQUAL_STACK_TRACE fix is enabled
+/// for the given function address via the DecompilerFixes registry.
+///
 /// \param op is the MULTIEQUAL operation
 /// \param spc is the stack address space
 /// \param spInput is the stack pointer input varnode
+/// \param funcAddr is the function entry address (for fix registry lookup)
 /// \param commonOffset will receive the common offset if all inputs match
 /// \return true if all inputs have the same definite offset from ESP
-extern bool checkMultiequalStackOffsets(PcodeOp *op, AddrSpace *spc, Varnode *spInput, uintb &commonOffset);
+extern bool checkMultiequalStackOffsets(PcodeOp *op, AddrSpace *spc, Varnode *spInput, uint8 funcAddr, uintb &commonOffset);
 
 }
 

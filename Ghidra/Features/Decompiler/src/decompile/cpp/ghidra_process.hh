@@ -237,6 +237,36 @@ public:
   virtual void rawAction(void);
 };
 
+/// \brief Command to \b register per-function decompiler fixes
+///
+/// This command registers a set of function addresses to receive specific decompiler fixes.
+/// The fixes are identified by flag values (see DecompilerFixFlags).
+/// The command does not require an Architecture - it operates on a global registry.
+/// It expects 2 parameters: a flags value and a list of addresses.
+class SetDecompilerFixes : public GhidraCommand {
+  uint4 flags;				///< The fix flags to apply
+  vector<uint8> addresses;		///< The function addresses to register
+  virtual void loadParameters(void);
+  virtual void sendResult(void);
+public:
+  bool res;				///< Set to \b true if the registration succeeded
+  SetDecompilerFixes(void) : flags(0), res(false) {}	///< Constructor
+  virtual void rawAction(void);
+};
+
+/// \brief Command to \b clear all registered decompiler fixes
+///
+/// This command clears all function addresses from the decompiler fixes registry.
+/// The command does not require an Architecture - it operates on a global registry.
+class ClearDecompilerFixes : public GhidraCommand {
+  virtual void loadParameters(void);
+  virtual void sendResult(void);
+public:
+  bool res;				///< Set to \b true if the clear succeeded
+  ClearDecompilerFixes(void) : res(false) {}	///< Constructor
+  virtual void rawAction(void);
+};
+
 #ifdef __REMOTE_SOCKET__
 extern void connect_to_console(Funcdata *fd);
 #endif

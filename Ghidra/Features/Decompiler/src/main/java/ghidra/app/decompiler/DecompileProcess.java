@@ -699,6 +699,65 @@ public class DecompileProcess {
 		}
 	}
 
+	/**
+	 * Register per-function decompiler fixes.
+	 * @param flags the fix flags to apply (see DecompilerFixFlags in C++)
+	 * @param addresses array of function entry addresses to register
+	 * @param response container for the result
+	 * @throws IOException for problems with the pipe
+	 * @throws DecompileException for problems executing the command
+	 */
+	public synchronized void sendSetDecompilerFixes(int flags, long[] addresses, ByteIngest response)
+			throws IOException, DecompileException {
+		if (!statusGood) {
+			throw new IOException("setDecompilerFixes called on bad process");
+		}
+		paramDecoder = null;
+		resultEncoder = null;
+		try {
+			write(command_start);
+			writeString("setDecompilerFixes");
+			writeString(Integer.toString(archId));  // Sent for protocol compatibility
+			writeString(Integer.toString(flags));
+			writeString(Integer.toString(addresses.length));
+			for (long addr : addresses) {
+				writeString(Long.toHexString(addr));
+			}
+			write(command_end);
+			readResponse(response);
+		}
+		catch (IOException e) {
+			statusGood = false;
+			throw e;
+		}
+	}
+
+	/**
+	 * Clear all registered decompiler fixes.
+	 * @param response container for the result
+	 * @throws IOException for problems with the pipe
+	 * @throws DecompileException for problems executing the command
+	 */
+	public synchronized void sendClearDecompilerFixes(ByteIngest response)
+			throws IOException, DecompileException {
+		if (!statusGood) {
+			throw new IOException("clearDecompilerFixes called on bad process");
+		}
+		paramDecoder = null;
+		resultEncoder = null;
+		try {
+			write(command_start);
+			writeString("clearDecompilerFixes");
+			writeString(Integer.toString(archId));  // Sent for protocol compatibility
+			write(command_end);
+			readResponse(response);
+		}
+		catch (IOException e) {
+			statusGood = false;
+			throw e;
+		}
+	}
+
 	// Calls from the decompiler
 
 	private void getRegister() throws IOException, DecoderException {

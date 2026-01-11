@@ -17,35 +17,13 @@
 /// \brief Simple unbuffered file logging for decompiler debugging
 ///
 /// This header provides debug logging macros for the decompiler.
-/// Enable by defining DECOMP_DEBUG_ENABLED before including this header.
-///
-/// Environment variables:
-///   DECOMP_TARGET_FUNC - Hex address to filter logging (e.g., "0x447f20")
-///                        Set to 0 or unset to apply to all functions
-///
-/// Log output is written to /tmp/decomp_debug.log
+/// Define DECOMP_DEBUG_ENABLED to enable logging to /tmp/decomp_debug.log
 
 #ifndef __DECOMP_DBG_HH__
 #define __DECOMP_DBG_HH__
 
-#define DECOMP_DEBUG_ENABLED
-
-#include <cstdlib>
-#include <cstdint>
-
-/// Get target function address from environment variable
-inline uint64_t getDecompTargetFunc() {
-  static uint64_t target = 0;
-  static bool initialized = false;
-  if (!initialized) {
-    const char* env = std::getenv("DECOMP_TARGET_FUNC");
-    if (env) {
-      target = std::strtoull(env, nullptr, 16);
-    }
-    initialized = true;
-  }
-  return target;
-}
+// Uncomment to enable debug logging
+// #define DECOMP_DEBUG_ENABLED
 
 #ifdef DECOMP_DEBUG_ENABLED
 
@@ -65,25 +43,9 @@ inline std::ofstream& getDecompLog() {
   getDecompLog() << _oss.str() << "\n"; \
 } while(0)
 
-/// Check if function address matches target (or target is 0 for all functions)
-#define DECOMP_IS_TARGET_FUNC(addr) \
-  (getDecompTargetFunc() == 0 || (addr) == getDecompTargetFunc())
-
-/// Thread-local flag for current function target status
-inline bool& decompIsCurrentTarget() {
-  static thread_local bool isTarget = false;
-  return isTarget;
-}
-
-#define DECOMP_SET_TARGET(addr) (decompIsCurrentTarget() = DECOMP_IS_TARGET_FUNC(addr))
-#define DECOMP_IS_CURRENT_TARGET() (decompIsCurrentTarget())
-
 #else
 
 #define DECOMP_LOG(msg) ((void)0)
-#define DECOMP_IS_TARGET_FUNC(addr) (getDecompTargetFunc() == 0 || (addr) == getDecompTargetFunc())
-#define DECOMP_SET_TARGET(addr) ((void)0)
-#define DECOMP_IS_CURRENT_TARGET() (getDecompTargetFunc() == 0)
 
 #endif
 

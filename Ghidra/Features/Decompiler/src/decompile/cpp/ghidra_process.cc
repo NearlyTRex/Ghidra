@@ -503,6 +503,8 @@ void GhidraDecompCapability::initialize(void)
   commandmap["structureGraph"] = new StructureGraph();
   commandmap["setAction"] = new SetAction();
   commandmap["setOptions"] = new SetOptions();
+  commandmap["setDecompilerFixes"] = new SetDecompilerFixes();
+  commandmap["clearDecompilerFixes"] = new ClearDecompilerFixes();
 }
 
 } // End namespace ghidra

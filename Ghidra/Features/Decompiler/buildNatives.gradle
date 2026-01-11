@@ -97,6 +97,8 @@ model {
 		                include "pcodeinject.cc"
 		                include "heritage.cc"
 		                include "multiequal_trace.cc"
+		                include "decompiler_fixes.cc"
+		                include "decompiler_fixes_cmd.cc"
 		                include "prefersplit.cc"
 		                include "rangeutil.cc"
 		                include "ruleaction.cc"
