@@ -595,7 +595,7 @@ public class DecompileCallback {
 				}
 			}
 
-			// Check for callfixup - INJECT pcode after original call (like cspec callfixups)
+			// Check for callfixup - Replace call with custom pcode (matches cspec callfixup behavior)
 			if (hasCallFixups()) {
 				FlowType flowType = instr.getFlowType();
 				if (flowType.isCall() && !flowType.isComputed()) {
@@ -608,35 +608,28 @@ public class DecompileCallback {
 							String targetName = targetFunc.getName();
 							List<String> fixupPcode = findCallFixup(targetName);
 							if (fixupPcode != null) {
-								Msg.info(this, "Callfixup: Injecting fixup for call to '" + targetName + "' at " + addr);
+								Msg.info(this, "Callfixup: Replacing call to '" + targetName + "' at " + addr);
 								try {
-									// Get original pcode from the instruction
-									PcodeOp[] originalOps = instr.getPcode();
-
-									// Parse the fixup pcode to inject
-									List<PcodeOp> injectedOps = new ArrayList<>();
-									int seqNum = originalOps.length;  // Continue sequence numbering
+									// Parse the fixup pcode that will replace the call
+									List<PcodeOp> replacementOps = new ArrayList<>();
+									int seqNum = 0;
 									for (String line : fixupPcode) {
 										PcodeOp op = parsePcodeOp(line, addr, seqNum++, addrfactory);
 										if (op != null) {
-											injectedOps.add(op);
+											replacementOps.add(op);
 										}
 									}
 
-									// Combine original + injected pcode
-									PcodeOp[] combinedOps = new PcodeOp[originalOps.length + injectedOps.size()];
-									System.arraycopy(originalOps, 0, combinedOps, 0, originalOps.length);
-									for (int i = 0; i < injectedOps.size(); i++) {
-										combinedOps[originalOps.length + i] = injectedOps.get(i);
-									}
+									// Replace original call pcode with fixup pcode
+									PcodeOp[] finalOps = replacementOps.toArray(new PcodeOp[0]);
 
 									int fallthruOffset = instr.getDefaultFallThroughOffset();
-									encodeInstruction(resultEncoder, addr, combinedOps, fallthruOffset, 0, addrfactory);
-									Msg.debug(this, "Callfixup: Encoded " + originalOps.length + " original + " +
-										injectedOps.size() + " injected ops for " + addr);
+									encodeInstruction(resultEncoder, addr, finalOps, fallthruOffset, 0, addrfactory);
+									Msg.debug(this, "Callfixup: Replaced call with " +
+										replacementOps.size() + " pcode ops for " + addr);
 									return;
 								} catch (Exception e) {
-									Msg.error(this, "Callfixup: INJECTION FAILED for " + addr + ": " + e.getMessage(), e);
+									Msg.error(this, "Callfixup: Replacement FAILED for " + addr + ": " + e.getMessage(), e);
 								}
 							}
 						}
