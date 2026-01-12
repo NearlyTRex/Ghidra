@@ -80,10 +80,24 @@ public class DecompileCallback {
 	}
 
 	// Callfixup support - replace calls to specific functions with custom pcode
-	// Exact name matches
-	private static Map<String, List<String>> callFixups = new HashMap<>();
-	// Pattern matches (function name contains pattern)
-	private static Map<String, List<String>> callFixupPatterns = new HashMap<>();
+
+	/**
+	 * Entry holding callfixup data: pcode and optional paramshift.
+	 */
+	private static class CallFixupEntry {
+		final List<String> pcode;
+		final int paramshift;
+
+		CallFixupEntry(List<String> pcode, int paramshift) {
+			this.pcode = pcode;
+			this.paramshift = paramshift;
+		}
+	}
+
+	// Exact name matches: funcName -> CallFixupEntry
+	private static Map<String, CallFixupEntry> callFixups = new HashMap<>();
+	// Pattern matches (function name contains pattern): pattern -> CallFixupEntry
+	private static Map<String, CallFixupEntry> callFixupPatterns = new HashMap<>();
 
 	/**
 	 * Register a callfixup for a specific function name.
@@ -93,8 +107,34 @@ public class DecompileCallback {
 	 * @param pcodeLines the P-code operation strings to replace the call with
 	 */
 	public static void registerCallFixup(String targetFuncName, List<String> pcodeLines) {
-		callFixups.put(targetFuncName, pcodeLines);
-		Msg.info(DecompileCallback.class, "Callfixup: Registered fixup for '" + targetFuncName + "' with " + pcodeLines.size() + " pcode ops");
+		registerCallFixup(targetFuncName, pcodeLines, 0);
+	}
+
+	/**
+	 * Register a callfixup for a specific function name with paramshift.
+	 * @param targetFuncName the exact function name to match
+	 * @param pcodeLines the P-code operation strings to replace the call with
+	 * @param paramshift number of parameters to shift (remove from front of param list)
+	 */
+	public static void registerCallFixup(String targetFuncName, List<String> pcodeLines, int paramshift) {
+		callFixups.put(targetFuncName, new CallFixupEntry(pcodeLines, paramshift));
+		String shiftInfo = paramshift > 0 ? " (paramshift=" + paramshift + ")" : "";
+		Msg.info(DecompileCallback.class, "Callfixup: Registered fixup for '" + targetFuncName + "' with " + pcodeLines.size() + " pcode ops" + shiftInfo);
+	}
+
+	/**
+	 * Register a callfixup for multiple exact target names.
+	 * @param targetNames list of exact function names to match
+	 * @param pcodeLines the P-code operation strings to replace the call with
+	 * @param paramshift number of parameters to shift (remove from front of param list)
+	 */
+	public static void registerCallFixupTargets(List<String> targetNames, List<String> pcodeLines, int paramshift) {
+		CallFixupEntry entry = new CallFixupEntry(pcodeLines, paramshift);
+		for (String targetName : targetNames) {
+			callFixups.put(targetName, entry);
+		}
+		String shiftInfo = paramshift > 0 ? " (paramshift=" + paramshift + ")" : "";
+		Msg.info(DecompileCallback.class, "Callfixup: Registered fixup for " + targetNames.size() + " targets with " + pcodeLines.size() + " pcode ops" + shiftInfo);
 	}
 
 	/**
@@ -104,8 +144,19 @@ public class DecompileCallback {
 	 * @param pcodeLines the P-code operation strings to replace the call with
 	 */
 	public static void registerCallFixupPattern(String pattern, List<String> pcodeLines) {
-		callFixupPatterns.put(pattern, pcodeLines);
-		Msg.info(DecompileCallback.class, "Callfixup: Registered pattern fixup for '*" + pattern + "*' with " + pcodeLines.size() + " pcode ops");
+		registerCallFixupPattern(pattern, pcodeLines, 0);
+	}
+
+	/**
+	 * Register a callfixup pattern with paramshift.
+	 * @param pattern the pattern to match (case-sensitive substring match)
+	 * @param pcodeLines the P-code operation strings to replace the call with
+	 * @param paramshift number of parameters to shift (remove from front of param list)
+	 */
+	public static void registerCallFixupPattern(String pattern, List<String> pcodeLines, int paramshift) {
+		callFixupPatterns.put(pattern, new CallFixupEntry(pcodeLines, paramshift));
+		String shiftInfo = paramshift > 0 ? " (paramshift=" + paramshift + ")" : "";
+		Msg.info(DecompileCallback.class, "Callfixup: Registered pattern fixup for '*" + pattern + "*' with " + pcodeLines.size() + " pcode ops" + shiftInfo);
 	}
 
 	/**
@@ -128,16 +179,16 @@ public class DecompileCallback {
 	 * Find a matching callfixup for the given function name.
 	 * First checks exact matches, then pattern matches.
 	 * @param funcName the function name to look up
-	 * @return the pcode lines for the fixup, or null if no match
+	 * @return the CallFixupEntry for the fixup, or null if no match
 	 */
-	private static List<String> findCallFixup(String funcName) {
+	private static CallFixupEntry findCallFixup(String funcName) {
 		// Check exact match first
-		List<String> fixup = callFixups.get(funcName);
+		CallFixupEntry fixup = callFixups.get(funcName);
 		if (fixup != null) {
 			return fixup;
 		}
 		// Check pattern matches
-		for (Map.Entry<String, List<String>> entry : callFixupPatterns.entrySet()) {
+		for (Map.Entry<String, CallFixupEntry> entry : callFixupPatterns.entrySet()) {
 			if (funcName.contains(entry.getKey())) {
 				return entry.getValue();
 			}
@@ -606,14 +657,15 @@ public class DecompileCallback {
 						Function targetFunc = listing.getFunctionAt(targetAddr);
 						if (targetFunc != null) {
 							String targetName = targetFunc.getName();
-							List<String> fixupPcode = findCallFixup(targetName);
-							if (fixupPcode != null) {
-								Msg.info(this, "Callfixup: Replacing call to '" + targetName + "' at " + addr);
+							CallFixupEntry fixupEntry = findCallFixup(targetName);
+							if (fixupEntry != null) {
+								String shiftInfo = fixupEntry.paramshift > 0 ? " (paramshift=" + fixupEntry.paramshift + ")" : "";
+								Msg.info(this, "Callfixup: Replacing call to '" + targetName + "' at " + addr + shiftInfo);
 								try {
 									// Parse the fixup pcode that will replace the call
 									List<PcodeOp> replacementOps = new ArrayList<>();
 									int seqNum = 0;
-									for (String line : fixupPcode) {
+									for (String line : fixupEntry.pcode) {
 										PcodeOp op = parsePcodeOp(line, addr, seqNum++, addrfactory);
 										if (op != null) {
 											replacementOps.add(op);
@@ -624,9 +676,9 @@ public class DecompileCallback {
 									PcodeOp[] finalOps = replacementOps.toArray(new PcodeOp[0]);
 
 									int fallthruOffset = instr.getDefaultFallThroughOffset();
-									encodeInstruction(resultEncoder, addr, finalOps, fallthruOffset, 0, addrfactory);
+									encodeInstruction(resultEncoder, addr, finalOps, fallthruOffset, fixupEntry.paramshift, addrfactory);
 									Msg.debug(this, "Callfixup: Replaced call with " +
-										replacementOps.size() + " pcode ops for " + addr);
+										replacementOps.size() + " pcode ops for " + addr + shiftInfo);
 									return;
 								} catch (Exception e) {
 									Msg.error(this, "Callfixup: Replacement FAILED for " + addr + ": " + e.getMessage(), e);
