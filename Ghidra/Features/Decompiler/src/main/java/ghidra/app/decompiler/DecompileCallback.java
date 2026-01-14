@@ -24,6 +24,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 import ghidra.app.cmd.function.CallDepthChangeInfo;
+import ghidra.app.plugin.processors.sleigh.SleighLanguage;
 import ghidra.docking.settings.SettingsImpl;
 import ghidra.program.disassemble.Disassembler;
 import ghidra.program.model.address.*;
@@ -34,6 +35,7 @@ import ghidra.program.model.listing.*;
 import ghidra.program.model.mem.MemoryAccessException;
 import ghidra.program.model.mem.MemoryBufferImpl;
 import ghidra.program.model.pcode.*;
+import ghidra.program.model.pcode.PcodeOverride;
 import ghidra.program.model.symbol.*;
 import ghidra.util.Msg;
 import ghidra.util.UndefinedFunction;
@@ -79,121 +81,218 @@ public class DecompileCallback {
 		return !pcodeOverrides.isEmpty();
 	}
 
-	// Callfixup support - replace calls to specific functions with custom pcode
+	// Callfixup support - register callfixups with Ghidra's native PcodeInjectLibrary
+	// Uses SLEIGH syntax in the body, matching cspec format
 
 	/**
-	 * Entry holding callfixup data: pcode and optional paramshift.
+	 * Definition of a callfixup to be registered with PcodeInjectLibrary.
 	 */
-	private static class CallFixupEntry {
-		final List<String> pcode;
+	private static class CallFixupDefinition {
+		final String name;
+		final List<String> targets;
+		final List<String> body;  // SLEIGH statements
 		final int paramshift;
 
-		CallFixupEntry(List<String> pcode, int paramshift) {
-			this.pcode = pcode;
+		CallFixupDefinition(String name, List<String> targets, List<String> body, int paramshift) {
+			this.name = name;
+			this.targets = targets;
+			this.body = body;
 			this.paramshift = paramshift;
 		}
 	}
 
-	// Exact name matches: funcName -> CallFixupEntry
-	private static Map<String, CallFixupEntry> callFixups = new HashMap<>();
-	// Pattern matches (function name contains pattern): pattern -> CallFixupEntry
-	private static Map<String, CallFixupEntry> callFixupPatterns = new HashMap<>();
-
-	/**
-	 * Register a callfixup for a specific function name.
-	 * When a CALL to a function with this exact name is encountered during decompilation,
-	 * the call will be replaced with the specified pcode.
-	 * @param targetFuncName the exact function name to match
-	 * @param pcodeLines the P-code operation strings to replace the call with
-	 */
-	public static void registerCallFixup(String targetFuncName, List<String> pcodeLines) {
-		registerCallFixup(targetFuncName, pcodeLines, 0);
-	}
-
-	/**
-	 * Register a callfixup for a specific function name with paramshift.
-	 * @param targetFuncName the exact function name to match
-	 * @param pcodeLines the P-code operation strings to replace the call with
-	 * @param paramshift number of parameters to shift (remove from front of param list)
-	 */
-	public static void registerCallFixup(String targetFuncName, List<String> pcodeLines, int paramshift) {
-		callFixups.put(targetFuncName, new CallFixupEntry(pcodeLines, paramshift));
-		String shiftInfo = paramshift > 0 ? " (paramshift=" + paramshift + ")" : "";
-		Msg.info(DecompileCallback.class, "Callfixup: Registered fixup for '" + targetFuncName + "' with " + pcodeLines.size() + " pcode ops" + shiftInfo);
-	}
+	// Pending callfixups to be installed when DecompileCallback is instantiated
+	private static List<CallFixupDefinition> pendingCallFixups = new ArrayList<>();
+	// Track which callfixups were installed (for cleanup)
+	private static Set<String> installedCallFixupNames = new HashSet<>();
+	// Map target function names to callfixup names (for lookup override)
+	private static Map<String, String> targetToCallFixupName = new HashMap<>();
 
 	/**
 	 * Register a callfixup for multiple exact target names.
+	 * The callfixup will be installed to Ghidra's native PcodeInjectLibrary when
+	 * decompilation starts, using SLEIGH syntax for the body.
+	 * @param name the callfixup name (used in warnings/logging)
 	 * @param targetNames list of exact function names to match
-	 * @param pcodeLines the P-code operation strings to replace the call with
+	 * @param sleighBody list of SLEIGH statements (e.g., "ESP = ESP - EAX;")
 	 * @param paramshift number of parameters to shift (remove from front of param list)
 	 */
-	public static void registerCallFixupTargets(List<String> targetNames, List<String> pcodeLines, int paramshift) {
-		CallFixupEntry entry = new CallFixupEntry(pcodeLines, paramshift);
-		for (String targetName : targetNames) {
-			callFixups.put(targetName, entry);
+	public static void registerCallFixupTargets(String name, List<String> targetNames, List<String> sleighBody, int paramshift) {
+		if (targetNames == null || targetNames.isEmpty()) {
+			return;
 		}
-		String shiftInfo = paramshift > 0 ? " (paramshift=" + paramshift + ")" : "";
-		Msg.info(DecompileCallback.class, "Callfixup: Registered fixup for " + targetNames.size() + " targets with " + pcodeLines.size() + " pcode ops" + shiftInfo);
-	}
-
-	/**
-	 * Register a callfixup pattern. When a CALL to a function whose name contains
-	 * the pattern is encountered, the call will be replaced with the specified pcode.
-	 * @param pattern the pattern to match (case-sensitive substring match)
-	 * @param pcodeLines the P-code operation strings to replace the call with
-	 */
-	public static void registerCallFixupPattern(String pattern, List<String> pcodeLines) {
-		registerCallFixupPattern(pattern, pcodeLines, 0);
-	}
-
-	/**
-	 * Register a callfixup pattern with paramshift.
-	 * @param pattern the pattern to match (case-sensitive substring match)
-	 * @param pcodeLines the P-code operation strings to replace the call with
-	 * @param paramshift number of parameters to shift (remove from front of param list)
-	 */
-	public static void registerCallFixupPattern(String pattern, List<String> pcodeLines, int paramshift) {
-		callFixupPatterns.put(pattern, new CallFixupEntry(pcodeLines, paramshift));
-		String shiftInfo = paramshift > 0 ? " (paramshift=" + paramshift + ")" : "";
-		Msg.info(DecompileCallback.class, "Callfixup: Registered pattern fixup for '*" + pattern + "*' with " + pcodeLines.size() + " pcode ops" + shiftInfo);
+		if (name == null || name.isEmpty()) {
+			// Fallback: generate name from first target
+			name = "annot_" + targetNames.get(0).replaceAll("[^a-zA-Z0-9_]", "_");
+		}
+		pendingCallFixups.add(new CallFixupDefinition(name, new ArrayList<>(targetNames),
+			new ArrayList<>(sleighBody), paramshift));
 	}
 
 	/**
 	 * Clear all registered callfixups.
+	 * Note: Callfixups already installed to PcodeInjectLibrary cannot be removed
+	 * without program restart.
 	 */
 	public static void clearCallFixups() {
-		callFixups.clear();
-		callFixupPatterns.clear();
+		pendingCallFixups.clear();
+		// Note: installedCallFixupNames is not cleared - those are in the library
 	}
 
 	/**
-	 * Check if any callfixups are registered.
+	 * Check if any callfixups are registered or pending.
 	 * @return true if callfixups exist
 	 */
 	public static boolean hasCallFixups() {
-		return !callFixups.isEmpty() || !callFixupPatterns.isEmpty();
+		return !pendingCallFixups.isEmpty() || !installedCallFixupNames.isEmpty();
 	}
 
 	/**
-	 * Find a matching callfixup for the given function name.
-	 * First checks exact matches, then pattern matches.
-	 * @param funcName the function name to look up
-	 * @return the CallFixupEntry for the fixup, or null if no match
+	 * Install pending callfixups to the given PcodeInjectLibrary.
+	 * Builds XML matching cspec format and uses restoreXmlInject.
+	 * @param library the PcodeInjectLibrary to register with
+	 * @param language the SleighLanguage for parsing
 	 */
-	private static CallFixupEntry findCallFixup(String funcName) {
-		// Check exact match first
-		CallFixupEntry fixup = callFixups.get(funcName);
-		if (fixup != null) {
-			return fixup;
+	private static void installPendingCallFixups(PcodeInjectLibrary library, SleighLanguage language) {
+		if (pendingCallFixups.isEmpty()) {
+			return;
 		}
-		// Check pattern matches
-		for (Map.Entry<String, CallFixupEntry> entry : callFixupPatterns.entrySet()) {
-			if (funcName.contains(entry.getKey())) {
-				return entry.getValue();
+
+		for (CallFixupDefinition def : pendingCallFixups) {
+			// Skip if already installed
+			if (installedCallFixupNames.contains(def.name)) {
+				continue;
+			}
+
+			// Check if a callfixup with this name already exists in the library
+			if (library.getPayload(InjectPayload.CALLFIXUP_TYPE, def.name) != null) {
+				continue;
+			}
+
+			try {
+				// Build XML string matching cspec format
+				StringBuilder xml = new StringBuilder();
+				xml.append("<callfixup name=\"").append(escapeXml(def.name)).append("\">\n");
+				for (String target : def.targets) {
+					xml.append("  <target name=\"").append(escapeXml(target)).append("\"/>\n");
+				}
+				xml.append("  <pcode");
+				if (def.paramshift > 0) {
+					xml.append(" paramshift=\"").append(def.paramshift).append("\"");
+				}
+				xml.append(">\n");
+				xml.append("    <body><![CDATA[\n");
+				for (String stmt : def.body) {
+					xml.append("      ").append(stmt).append("\n");
+				}
+				xml.append("    ]]></body>\n");
+				xml.append("  </pcode>\n");
+				xml.append("</callfixup>\n");
+
+				String xmlStr = xml.toString();
+
+				// Parse XML and register
+				ghidra.xml.XmlPullParser parser = new ghidra.xml.NonThreadedXmlPullParserImpl(
+					xmlStr, "callfixup:" + def.name, null, false);
+				library.restoreXmlInject("annotation", def.name, InjectPayload.CALLFIXUP_TYPE, parser);
+
+				installedCallFixupNames.add(def.name);
+				// Map each target to this callfixup name for lookup override
+				for (String target : def.targets) {
+					targetToCallFixupName.put(target, def.name);
+				}
+			}
+			catch (Exception e) {
+				Msg.error(DecompileCallback.class, "Failed to install callfixup '" + def.name + "': " + e.getMessage());
 			}
 		}
-		return null;
+
+		// Clear pending list after installation
+		pendingCallFixups.clear();
+	}
+
+	/**
+	 * Escape special XML characters in a string.
+	 */
+	private static String escapeXml(String s) {
+		return s.replace("&", "&amp;")
+				.replace("<", "&lt;")
+				.replace(">", "&gt;")
+				.replace("\"", "&quot;")
+				.replace("'", "&apos;");
+	}
+
+	/**
+	 * Get the callfixup name for a target function, if one is registered.
+	 * @param funcName the target function name
+	 * @return the callfixup name, or null if no mapping exists
+	 */
+	public static String getCallFixupForTarget(String funcName) {
+		return targetToCallFixupName.get(funcName);
+	}
+
+	/**
+	 * Apply an annotation-based callfixup to a function if one is registered.
+	 * This sets the inject name on the function prototype so it will be sent to the decompiler.
+	 * @param func the function to check
+	 * @param hfunc the HighFunction whose prototype to update
+	 */
+	private static void applyAnnotationCallfixup(Function func, HighFunction hfunc) {
+		// Only apply if no callfixup already set (don't override database callfixups)
+		if (func.getCallFixup() != null) {
+			return;
+		}
+		String fixupName = getCallFixupForTarget(func.getName());
+		if (fixupName != null) {
+			hfunc.getFunctionPrototype().setInjectName(fixupName);
+		}
+	}
+
+	/**
+	 * Custom PcodeOverride wrapper that checks our target-to-callfixup mapping
+	 * before falling back to the database-stored callfixup.
+	 */
+	private static class AnnotationPcodeOverride extends InstructionPcodeOverride {
+		private final CompilerSpec compilerSpec;
+
+		public AnnotationPcodeOverride(Instruction instr, CompilerSpec compilerSpec) {
+			super(instr);
+			this.compilerSpec = compilerSpec;
+		}
+
+		@Override
+		public boolean hasCallFixup(Address callDestAddr) {
+			// First check our annotation-based mapping
+			Program program = instr.getProgram();
+			Function func = program.getFunctionManager().getFunctionAt(callDestAddr);
+			if (func != null) {
+				String fixupName = getCallFixupForTarget(func.getName());
+				if (fixupName != null) {
+					return true;
+				}
+			}
+			// Fall back to database-stored callfixup
+			return super.hasCallFixup(callDestAddr);
+		}
+
+		@Override
+		public InjectPayload getCallFixup(Address callDestAddr) {
+			// First check our annotation-based mapping
+			Program program = instr.getProgram();
+			Function func = program.getFunctionManager().getFunctionAt(callDestAddr);
+			if (func != null) {
+				String fixupName = getCallFixupForTarget(func.getName());
+				if (fixupName != null) {
+					InjectPayload payload = compilerSpec.getPcodeInjectLibrary()
+						.getPayload(InjectPayload.CALLFIXUP_TYPE, fixupName);
+					if (payload != null) {
+						return payload;
+					}
+				}
+			}
+			// Fall back to database-stored callfixup
+			return super.getCallFixup(callDestAddr);
+		}
 	}
 
 	/**
@@ -470,6 +569,12 @@ public class DecompileCallback {
 		cpool = null;
 		nativeMessage = null;
 		debug = null;
+
+		// Install any pending callfixups to the native PcodeInjectLibrary
+		if (!pendingCallFixups.isEmpty() && language instanceof SleighLanguage) {
+			PcodeInjectLibrary library = compilerSpec.getPcodeInjectLibrary();
+			installPendingCallFixups(library, (SleighLanguage) language);
+		}
 	}
 
 	/**
@@ -611,7 +716,7 @@ public class DecompileCallback {
 						PatchPackedEncode origEncoder = new PatchPackedEncode();
 						origEncoder.clear();
 						instr.getPrototype().getPcodePacked(origEncoder, instr.getInstructionContext(),
-							new InstructionPcodeOverride(instr));
+							new AnnotationPcodeOverride(instr, pcodecompilerspec));
 						int origSize = origEncoder.size();
 
 						// Now encode our override
@@ -646,52 +751,9 @@ public class DecompileCallback {
 				}
 			}
 
-			// Check for callfixup - Replace call with custom pcode (matches cspec callfixup behavior)
-			if (hasCallFixups()) {
-				FlowType flowType = instr.getFlowType();
-				if (flowType.isCall() && !flowType.isComputed()) {
-					// This is a direct call - get the target
-					Address[] flows = instr.getFlows();
-					if (flows != null && flows.length > 0) {
-						Address targetAddr = flows[0];
-						Function targetFunc = listing.getFunctionAt(targetAddr);
-						if (targetFunc != null) {
-							String targetName = targetFunc.getName();
-							CallFixupEntry fixupEntry = findCallFixup(targetName);
-							if (fixupEntry != null) {
-								String shiftInfo = fixupEntry.paramshift > 0 ? " (paramshift=" + fixupEntry.paramshift + ")" : "";
-								Msg.info(this, "Callfixup: Replacing call to '" + targetName + "' at " + addr + shiftInfo);
-								try {
-									// Parse the fixup pcode that will replace the call
-									List<PcodeOp> replacementOps = new ArrayList<>();
-									int seqNum = 0;
-									for (String line : fixupEntry.pcode) {
-										PcodeOp op = parsePcodeOp(line, addr, seqNum++, addrfactory);
-										if (op != null) {
-											replacementOps.add(op);
-										}
-									}
-
-									// Replace original call pcode with fixup pcode
-									PcodeOp[] finalOps = replacementOps.toArray(new PcodeOp[0]);
-
-									int fallthruOffset = instr.getDefaultFallThroughOffset();
-									encodeInstruction(resultEncoder, addr, finalOps, fallthruOffset, fixupEntry.paramshift, addrfactory);
-									Msg.debug(this, "Callfixup: Replaced call with " +
-										replacementOps.size() + " pcode ops for " + addr + shiftInfo);
-									return;
-								} catch (Exception e) {
-									Msg.error(this, "Callfixup: Replacement FAILED for " + addr + ": " + e.getMessage(), e);
-								}
-							}
-						}
-					}
-				}
-			}
-
 			instr.getPrototype()
 					.getPcodePacked(resultEncoder, instr.getInstructionContext(),
-						new InstructionPcodeOverride(instr));
+						new AnnotationPcodeOverride(instr, pcodecompilerspec));
 			return;
 		}
 		catch (UsrException e) {
@@ -1231,6 +1293,9 @@ public class DecompileCallback {
 		int extrapop = getExtraPopOverride(func, addr);
 		hfunc.grabFromFunction(extrapop, false, (extrapop != default_extrapop));
 
+		// Check if we have an annotation-based callfixup for this function
+		applyAnnotationCallfixup(func, hfunc);
+
 		HighSymbol funcSymbol = new HighFunctionSymbol(addr, 2, hfunc);
 		Namespace namespc = funcSymbol.getNamespace();
 		if (debug != null) {
@@ -1413,6 +1478,9 @@ public class DecompileCallback {
 				int extrapop = getExtraPopOverride(func, addr);
 				hfunc.grabFromFunction(extrapop, includeDefaultNames,
 					(extrapop != default_extrapop));
+
+				// Check if we have an annotation-based callfixup for this function
+				applyAnnotationCallfixup(func, hfunc);
 
 				HighSymbol functionSymbol = new HighFunctionSymbol(entry, (int) (diff + 1), hfunc);
 				Namespace namespc = functionSymbol.getNamespace();

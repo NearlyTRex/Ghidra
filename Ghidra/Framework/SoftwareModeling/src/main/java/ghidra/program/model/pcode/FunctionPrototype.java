@@ -37,6 +37,15 @@ public class FunctionPrototype {
 	private LocalSymbolMap localsyms; // Prototype backed by symbol map
 	private String modelname; // Name of prototype model
 	private String injectname; // Name of pcode inject associated with this prototype
+
+	/**
+	 * Set the callfixup (inject) name for this prototype.
+	 * This can be used to override or set the callfixup after grabFromFunction().
+	 * @param name the callfixup name, or null to clear
+	 */
+	public void setInjectName(String name) {
+		this.injectname = name;
+	}
 	private DataType returntype; // Output parameter
 	private VariableStorage returnstorage;	// Where the output value is stored
 	private ParameterDefinition[] params; // Internally backed prototype. Only non-null if localsyms is null
