@@ -15,6 +15,7 @@
  */
 #include "varmap.hh"
 #include "funcdata.hh"
+#include "decomp_fixes_spacebase.hh"
 
 namespace ghidra {
 
@@ -663,7 +664,8 @@ void AliasChecker::gatherInternal(void) const
   calculated = true;
   aliasBoundary = localExtreme;
   Varnode *spacebase = fd->findSpacebaseInput(space);
-  if (spacebase == (Varnode *)0) return; // No possible alias
+  spacebase = tryRecoverSpacebaseForAlias(fd, space, spacebase);  // DFIX_ALIAS_RECOVERY
+  if (spacebase == (Varnode *)0) return;
 
   gatherAdditiveBase(spacebase,addBase);
   for(vector<AddBase>::iterator iter=addBase.begin();iter!=addBase.end();++iter) {

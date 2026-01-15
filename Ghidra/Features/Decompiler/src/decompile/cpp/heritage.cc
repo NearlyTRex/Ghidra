@@ -16,7 +16,7 @@
 #include "heritage.hh"
 #include "funcdata.hh"
 #include "prefersplit.hh"
-#include "multiequal_trace.hh"
+#include "decomp_fixes_multiequal.hh"
 
 namespace ghidra {
 

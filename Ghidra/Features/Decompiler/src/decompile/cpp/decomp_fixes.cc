@@ -13,10 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-/// \file decompiler_fixes.cc
+/// \file decomp_fixes.cc
 /// \brief Implementation of per-function decompiler fixes registry
 
-#include "decompiler_fixes.hh"
+#include "decomp_fixes.hh"
 #include <map>
 
 namespace ghidra {

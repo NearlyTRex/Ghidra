@@ -13,11 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-/// \file multiequal_trace.hh
-/// \brief MULTIEQUAL stack offset tracing for heritage analysis
+/// \file decomp_fixes_multiequal.hh
+/// \brief MULTIEQUAL stack offset tracing for heritage analysis (DFIX_MULTIEQUAL_STACK_TRACE)
 
-#ifndef __MULTIEQUAL_TRACE_HH__
-#define __MULTIEQUAL_TRACE_HH__
+#ifndef __DECOMP_FIXES_MULTIEQUAL_HH__
+#define __DECOMP_FIXES_MULTIEQUAL_HH__
 
 #include "op.hh"
 #include "space.hh"

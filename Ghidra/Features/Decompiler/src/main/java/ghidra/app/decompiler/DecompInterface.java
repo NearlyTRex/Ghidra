@@ -84,11 +84,19 @@ public class DecompInterface {
 
 	/**
 	 * Decompiler fix flags - used with setDecompilerFixes() to enable per-function fixes.
-	 * These must match DecompilerFixFlags in decompiler_fixes.hh
+	 * These must match DecompilerFixFlags in decomp_fixes.hh
 	 */
 	public static final int DFIX_NONE = 0;
 	/** Trace MULTIEQUAL inputs for precise stack offsets in heritage analysis */
 	public static final int DFIX_MULTIEQUAL_STACK_TRACE = 1 << 0;
+	/** Force spacebase construction during type inference */
+	public static final int DFIX_FORCE_SPACEBASE = 1 << 1;
+	/** Enhanced symbol lookup for stack variables (reserved) */
+	public static final int DFIX_STACK_SYMBOL_LOOKUP = 1 << 2;
+	/** Recover spacebase in alias checker before bailout */
+	public static final int DFIX_ALIAS_RECOVERY = 1 << 3;
+	/** Propagate spacebase flag on COPY operations */
+	public static final int DFIX_SPACEBASE_PROPAGATION = 1 << 4;
 
 	public static class EncodeDecodeSet {
 		public OverlayAddressSpace overlay;		// Active overlay space or null

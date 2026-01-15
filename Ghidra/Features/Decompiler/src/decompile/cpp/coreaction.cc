@@ -18,6 +18,7 @@
 #include "double.hh"
 #include "subflow.hh"
 #include "constseq.hh"
+#include "decomp_fixes_spacebase.hh"
 
 namespace ghidra {
 
@@ -5406,6 +5407,7 @@ int4 ActionInferTypes::apply(Funcdata &data)
   propagateAcrossReturns(data);
   AddrSpace *spcid = data.getScopeLocal()->getSpaceId();
   Varnode *spcvn = data.findSpacebaseInput(spcid);
+  spcvn = tryForceSpacebaseConstruction(data, spcid, spcvn);  // DFIX_FORCE_SPACEBASE
   if (spcvn != (Varnode *)0)
     propagateSpacebaseRef(data,spcvn);
   if (writeBack(data)) {
@@ -5510,6 +5512,7 @@ void ActionDatabase::universalAction(Architecture *conf)
       {
 	actprop = new ActionPool(Action::rule_repeatapply,"oppool1");
 	actprop->addRule( new RuleEarlyRemoval("deadcode"));
+	actprop->addRule( new RuleSpacebaseCopy("analysis"));  // DFIX_SPACEBASE_PROPAGATION
 	actprop->addRule( new RuleTermOrder("analysis"));
 	actprop->addRule( new RuleSelectCse("analysis"));
 	actprop->addRule( new RuleCollectTerms("analysis"));

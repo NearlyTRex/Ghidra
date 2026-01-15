@@ -13,11 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-/// \file decompiler_fixes_cmd.cc
+/// \file decomp_fixes_cmd.cc
 /// \brief Implementation of GhidraCommands for per-function decompiler fixes
 
 #include "ghidra_process.hh"
-#include "decompiler_fixes.hh"
+#include "decomp_fixes.hh"
 
 namespace ghidra {
 

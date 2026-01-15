@@ -13,11 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-/// \file multiequal_trace.cc
-/// \brief MULTIEQUAL stack offset tracing implementation
+/// \file decomp_fixes_multiequal.cc
+/// \brief MULTIEQUAL stack offset tracing implementation (DFIX_MULTIEQUAL_STACK_TRACE)
 
-#include "multiequal_trace.hh"
-#include "decompiler_fixes.hh"
+#include "decomp_fixes_multiequal.hh"
+#include "decomp_fixes.hh"
 #include "decomp_dbg.hh"
 #include <set>
 

@@ -13,11 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-/// \file decompiler_fixes.hh
+/// \file decomp_fixes.hh
 /// \brief Registry for enabling per-function decompiler fixes
 
-#ifndef __DECOMPILER_FIXES_HH__
-#define __DECOMPILER_FIXES_HH__
+#ifndef __DECOMP_FIXES_HH__
+#define __DECOMP_FIXES_HH__
 
 #include "types.h"
 
@@ -27,9 +27,10 @@ namespace ghidra {
 enum DecompilerFixFlags {
   DFIX_NONE = 0,
   DFIX_MULTIEQUAL_STACK_TRACE = 1 << 0,  ///< Trace MULTIEQUAL inputs for precise stack offsets
-  // Future fixes can be added here:
-  // DFIX_FUTURE_FIX_1 = 1 << 1,
-  // DFIX_FUTURE_FIX_2 = 1 << 2,
+  DFIX_FORCE_SPACEBASE = 1 << 1,         ///< Force spacebase construction in type inference
+  DFIX_STACK_SYMBOL_LOOKUP = 1 << 2,     ///< Enhanced symbol lookup for stack variables (reserved)
+  DFIX_ALIAS_RECOVERY = 1 << 3,          ///< Recover spacebase in alias checker before bailout
+  DFIX_SPACEBASE_PROPAGATION = 1 << 4,   ///< Propagate spacebase flag on COPY operations
 };
 
 /// \brief Registry for per-function decompiler fixes
