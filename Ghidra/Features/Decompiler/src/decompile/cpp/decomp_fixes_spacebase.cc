@@ -109,7 +109,7 @@ int4 RuleSpacebaseCopy::applyOp(PcodeOp *op, Funcdata &data)
   if (ptrTarget->getMetatype() != TYPE_SPACEBASE) return 0;
 
   // Propagate the spacebase flag and type
-  out->setFlags(Varnode::spacebase);
+  data.markVarnodeSpacebase(out);
   out->updateType(inType, true, true);
 
   return 1;
