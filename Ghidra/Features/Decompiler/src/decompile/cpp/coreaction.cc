@@ -18,8 +18,9 @@
 #include "double.hh"
 #include "subflow.hh"
 #include "constseq.hh"
-#include "decomp_fixes_spacebase.hh"
 #include "bitfield.hh"
+
+#include "decomp_fixes_spacebase.hh"
 
 namespace ghidra {
 
@@ -5300,6 +5301,17 @@ void ActionInferTypes::propagateSpacebaseRef(Funcdata &data,Varnode *spcvn)
       if (vn->isConstant()) {
 	addr = sbtype->getAddress(vn->getOffset(),vn->getSize(),op->getAddr());
 	propagateRef(data,op->getOut(),addr);
+      }
+      break;
+    case CPUI_INT_SUB:
+      // Handle spacebase - constant (e.g. shifted frame pointer: SUB EBP,0x7A)
+      if (op->getIn(0) == spcvn) {
+	vn = op->getIn(1);
+	if (vn->isConstant()) {
+	  uintb negoff = (uintb)(-(intb)vn->getOffset()) & calc_mask(vn->getSize());
+	  addr = sbtype->getAddress(negoff,vn->getSize(),op->getAddr());
+	  propagateRef(data,op->getOut(),addr);
+	}
       }
       break;
     case CPUI_PTRADD:

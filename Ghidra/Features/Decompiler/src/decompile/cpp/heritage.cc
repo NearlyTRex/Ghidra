@@ -1034,6 +1034,35 @@ bool Heritage::discoverIndexedStackPointers(AddrSpace *spc,vector<PcodeOp *> &fr
 	  }
 	  break;
 	}
+	case CPUI_INT_SUB:
+	{
+	  // Handle SUB reg, const (e.g. SUB EBP,0x7A shifting frame pointer into middle of frame)
+	  // The stack-pointer-derived value must be input 0; input 1 is the subtracted constant
+	  if (op->getSlot(curNode.vn) != 0) break;	// Stack-derived value must be the minuend
+	  Varnode *otherVn = op->getIn(1);
+	  if (otherVn->isConstant()) {
+	    uintb newOffset = spc->wrapOffset(curNode.offset - otherVn->getOffset());
+	    StackNode nextNode(outVn,newOffset,curNode.traversals);
+	    if (nextNode.iter != nextNode.vn->endDescend()) {
+	      outVn->setMark();
+	      path.push_back(nextNode);
+	      markedVn.push_back(outVn);
+	    }
+	    else if (outVn->getSpace()->getType() == IPTR_SPACEBASE)
+	      unknownStackStorage = true;
+	  }
+	  else {
+	    StackNode nextNode(outVn,curNode.offset,curNode.traversals | StackNode::nonconstant_index);
+	    if (nextNode.iter != nextNode.vn->endDescend()) {
+	      outVn->setMark();
+	      path.push_back(nextNode);
+	      markedVn.push_back(outVn);
+	    }
+	    else if (outVn->getSpace()->getType() == IPTR_SPACEBASE)
+	      unknownStackStorage = true;
+	  }
+	  break;
+	}
 	case CPUI_SEGMENTOP:
 	{
 	  if (op->getIn(2) != curNode.vn) break;	// Check that stackpointer comes in as inner pointer
