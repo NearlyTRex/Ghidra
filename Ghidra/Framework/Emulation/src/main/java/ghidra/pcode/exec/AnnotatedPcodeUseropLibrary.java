@@ -41,7 +41,7 @@ import utilities.util.AnnotationUtilities;
  *
  * @param <T> the type of data processed by the library
  */
-public abstract class AnnotatedPcodeUseropLibrary<T> implements PcodeUseropLibrary<T> {
+public abstract class AnnotatedPcodeUseropLibrary<T> extends DefaultPcodeUseropLibrary<T> {
 	private static final Map<Class<?>, Set<Method>> CACHE_BY_CLASS = new HashMap<>();
 
 	private static Set<Method> collectDefinitions(
@@ -263,7 +263,13 @@ public abstract class AnnotatedPcodeUseropLibrary<T> implements PcodeUseropLibra
 			this.method = method;
 			this.library = library;
 			try {
-				this.handle = lookup.unreflect(method).bindTo(library);
+				MethodHandle unbound = lookup.unreflect(method);
+				if (Modifier.isStatic(method.getModifiers())) {
+					this.handle = unbound;
+				}
+				else {
+					this.handle = lookup.unreflect(method).bindTo(library);
+				}
 			}
 			catch (IllegalAccessException e) {
 				throw new IllegalArgumentException(
@@ -819,10 +825,6 @@ public abstract class AnnotatedPcodeUseropLibrary<T> implements PcodeUseropLibra
 	public @interface OpOp {
 	}
 
-	protected Map<String, PcodeUseropDefinition<T>> ops = new HashMap<>();
-	private Map<String, PcodeUseropDefinition<T>> unmodifiableOps =
-		Collections.unmodifiableMap(ops);
-
 	/**
 	 * Default constructor, usually invoked implicitly
 	 */
@@ -857,10 +859,5 @@ public abstract class AnnotatedPcodeUseropLibrary<T> implements PcodeUseropLibra
 	 */
 	protected Lookup getMethodLookup() {
 		return MethodHandles.lookup();
-	}
-
-	@Override
-	public Map<String, PcodeUseropDefinition<T>> getUserops() {
-		return unmodifiableOps;
 	}
 }

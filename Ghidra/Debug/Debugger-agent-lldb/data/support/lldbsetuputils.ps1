@@ -24,6 +24,9 @@ function Add-Lldb-Init-Args {
 	if ("$Env:OPT_ARCH" -ne "") {
 		$ArgList.Value+=("-o", "`"settings set target.default-arch $Env:OPT_ARCH`"")
 	}
+	if ("$Env:OPT_LLDB_ARGS" -ne "") {
+		$ArgList.Value+=($Env:OPT_LLDB_ARGS)
+	}
 }
 
 function Add-Lldb-Image-And-Args {
@@ -83,7 +86,9 @@ function Add-Lldb-Extra-Cmds {
 
 function Add-Lldb-Tail-Args {
 	param([ref]$ArgList)
-	# NOP
+
+	$ArgList.Value+=("-o", "`"ghidra trace sync-enable`"")
+	$ArgList.Value+=("-o", "`"ghidra trace sync-synth-stopped`"")
 }
 
 function Compute-Lldb-Usermode-Args {

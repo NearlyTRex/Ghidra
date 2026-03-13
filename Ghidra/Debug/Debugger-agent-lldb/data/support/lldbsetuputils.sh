@@ -19,10 +19,10 @@ add-lldb-init-args() {
 	args+=(-o "version")
 	args+=(-o "script import os, ghidralldb")
 	args+=(-o "script if not 'ghidralldb' in locals(): os._exit(253)")
-
 	if [ -n "$OPT_ARCH" ]; then
 		args+=(-o "settings set target.default-arch $OPT_ARCH")
 	fi
+	args+=($OPT_LLDB_ARGS)
 }
 
 add-lldb-image-and-args() {
@@ -82,6 +82,8 @@ add-lldb-extra-cmds() {
 }
 
 add-lldb-tail-args() {
+	args+=(-o "ghidra trace sync-enable")
+	args+=(-o "ghidra trace sync-synth-stopped")
 	true
 }
 

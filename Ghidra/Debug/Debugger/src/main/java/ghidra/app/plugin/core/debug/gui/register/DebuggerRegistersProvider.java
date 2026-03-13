@@ -25,8 +25,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.function.*;
 
 import javax.swing.*;
-import javax.swing.table.TableColumn;
-import javax.swing.table.TableColumnModel;
+import javax.swing.table.TableCellEditor;
+import javax.swing.table.TableModel;
 
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
@@ -35,6 +35,7 @@ import docking.*;
 import docking.action.*;
 import docking.action.builder.ActionBuilder;
 import docking.actions.PopupActionProvider;
+import docking.widgets.AbstractGCellRenderer;
 import docking.widgets.table.*;
 import docking.widgets.table.ColumnSortState.SortDirection;
 import docking.widgets.table.DefaultEnumeratedColumnTableModel.EnumeratedTableColumn;
@@ -48,7 +49,7 @@ import ghidra.app.services.*;
 import ghidra.app.services.DebuggerControlService.StateEditor;
 import ghidra.async.AsyncLazyValue;
 import ghidra.async.AsyncUtils;
-import ghidra.base.widgets.table.DataTypeTableCellEditor;
+import ghidra.base.widgets.table.AbstractDataTypeTableCellEditor;
 import ghidra.debug.api.target.Target;
 import ghidra.debug.api.tracemgr.DebuggerCoordinates;
 import ghidra.docking.settings.*;
@@ -139,33 +140,48 @@ public class DebuggerRegistersProvider extends ComponentProviderAdapter
 		}
 	}
 
+	protected static final RegisterValueCellRenderer VALUE_RENDERER =
+		new RegisterValueCellRenderer();
+	protected static final RegisterValueCellEditor VALUE_EDITOR =
+		new RegisterValueCellEditor();
+	protected static final SettingsDefinition[] VALUE_DEFS =
+		new SettingsDefinition[] { FormatSettingsDefinition.DEF_HEX, };
+	protected static final RegisterDataTypeEditor TYPE_EDITOR = new RegisterDataTypeEditor();
+
 	protected enum RegisterTableColumns
 		implements EnumeratedTableColumn<RegisterTableColumns, RegisterRow> {
-		FAV("Fav", 1, Boolean.class, RegisterRow::isFavorite, RegisterRow::setFavorite, //
-				r -> true, SortDirection.DESCENDING),
+		FAV("Fav", 1, Boolean.class, RegisterRow::isFavorite, RegisterRow::setFavorite, r -> true,
+				SortDirection.DESCENDING),
 		NUMBER("#", 1, Integer.class, RegisterRow::getNumber),
 		NAME("Name", 40, String.class, RegisterRow::getName),
-		VALUE("Value", 100, BigInteger.class, RegisterRow::getValue, RegisterRow::setValue, //
+		VALUE("Value", 100, BigInteger.class, RegisterRow::getValue, RegisterRow::setValue,
 				RegisterRow::isValueEditable, SortDirection.ASCENDING) {
-			private static final RegisterValueCellRenderer RENDERER =
-				new RegisterValueCellRenderer();
-			private static final SettingsDefinition[] DEFS =
-				new SettingsDefinition[] { FormatSettingsDefinition.DEF_HEX, };
 
 			@Override
 			public GColumnRenderer<BigInteger> getRenderer() {
-				return RENDERER;
+				return VALUE_RENDERER;
+			}
+
+			@Override
+			public TableCellEditor getEditor() {
+				return VALUE_EDITOR;
 			}
 
 			@Override
 			public SettingsDefinition[] getSettingsDefinitions() {
-				return DEFS;
+				return VALUE_DEFS;
 			}
 		},
-		TYPE("Type", 40, DataType.class, RegisterRow::getDataType, RegisterRow::setDataType, //
-				r -> true, SortDirection.ASCENDING),
-		REPR("Repr", 100, String.class, RegisterRow::getRepresentation, RegisterRow::setRepresentation, //
-				RegisterRow::isRepresentationEditable, SortDirection.ASCENDING);
+		TYPE("Type", 40, DataType.class, RegisterRow::getDataType, RegisterRow::setDataType,
+				r -> true, SortDirection.ASCENDING) {
+			@Override
+			public TableCellEditor getEditor() {
+				return TYPE_EDITOR;
+			}
+		},
+		REPR("Repr", 100, String.class, RegisterRow::getRepresentation,
+				RegisterRow::setRepresentation, RegisterRow::isRepresentationEditable,
+				SortDirection.ASCENDING);
 
 		private final String header;
 		private final int width;
@@ -194,6 +210,11 @@ public class DebuggerRegistersProvider extends ComponentProviderAdapter
 		}
 
 		@Override
+		public String getHeader() {
+			return header;
+		}
+
+		@Override
 		public Class<?> getValueClass() {
 			return cls;
 		}
@@ -201,11 +222,6 @@ public class DebuggerRegistersProvider extends ComponentProviderAdapter
 		@Override
 		public Object getValueOf(RegisterRow row) {
 			return getter.apply(row);
-		}
-
-		@Override
-		public String getHeader() {
-			return header;
 		}
 
 		@Override
@@ -229,7 +245,7 @@ public class DebuggerRegistersProvider extends ComponentProviderAdapter
 		}
 	}
 
-	protected static class RegistersTableModel
+	protected class RegistersTableModel
 			extends DefaultEnumeratedColumnTableModel<RegisterTableColumns, RegisterRow> {
 		public RegistersTableModel(PluginTool tool) {
 			super(tool, "Registers", RegisterTableColumns.class);
@@ -248,6 +264,14 @@ public class DebuggerRegistersProvider extends ComponentProviderAdapter
 				descriptor.addHiddenColumn(factory.create());
 			}
 			return descriptor;
+		}
+
+		ServiceProvider getServiceProvider() {
+			return serviceProvider;
+		}
+
+		Trace getTrace() {
+			return currentTrace;
 		}
 	}
 
@@ -410,44 +434,60 @@ public class DebuggerRegistersProvider extends ComponentProviderAdapter
 		}
 	}
 
+	public static void applyStateColors(AbstractGCellRenderer renderer,
+			GTableCellRenderingData data, Predicate<RegisterRow> isChanged) {
+		RegisterRow row = (RegisterRow) data.getRowObject();
+		if (!row.isKnown()) {
+			if (data.isSelected()) {
+				renderer.setForeground(COLOR_FOREGROUND_STALE_SEL);
+			}
+			else {
+				renderer.setForeground(COLOR_FOREGROUND_STALE);
+			}
+		}
+		else if (isChanged.test(row)) {
+			if (data.isSelected()) {
+				renderer.setForeground(COLOR_FOREGROUND_CHANGED_SEL);
+			}
+			else {
+				renderer.setForeground(COLOR_FOREGROUND_CHANGED);
+			}
+		}
+	}
+
 	static class RegisterValueCellRenderer extends HexDefaultGColumnRenderer<BigInteger> {
 		@Override
 		public final Component getTableCellRendererComponent(GTableCellRenderingData data) {
 			super.getTableCellRendererComponent(data);
-			RegisterRow row = (RegisterRow) data.getRowObject();
-			if (!row.isKnown()) {
-				if (data.isSelected()) {
-					setForeground(COLOR_FOREGROUND_STALE_SEL);
-				}
-				else {
-					setForeground(COLOR_FOREGROUND_STALE);
-				}
-			}
-			else if (row.isChanged()) {
-				if (data.isSelected()) {
-					setForeground(COLOR_FOREGROUND_CHANGED_SEL);
-				}
-				else {
-					setForeground(COLOR_FOREGROUND_CHANGED);
-				}
-			}
+			applyStateColors(this, data, RegisterRow::isChanged);
+			setFont(fixedWidthFont);
 			return this;
 		}
 	}
 
-	class RegisterDataTypeEditor extends DataTypeTableCellEditor {
-		public RegisterDataTypeEditor() {
-			super(plugin.getTool());
+	static class RegisterValueCellEditor extends HexBigIntegerTableCellEditor {
+		@Override
+		public Component getTableCellEditorComponent(JTable table, Object value, boolean isSelected,
+				int row, int column) {
+			super.getTableCellEditorComponent(table, value, isSelected, row, column);
+			JComponent component = input.getComponent();
+			component.setFont(VALUE_RENDERER.getFixedWidthFont());
+			return component;
 		}
+	}
 
+	static class RegisterDataTypeEditor extends AbstractDataTypeTableCellEditor {
 		@Override
 		protected AllowedDataTypes getAllowed(int row, int column) {
 			return AllowedDataTypes.FIXED_LENGTH;
 		}
 
 		@Override
-		protected boolean validateSelection(DataType dataType) {
-			RegisterRow row = regsTableModel.getModelData().get(regsTable.getEditingRow());
+		protected boolean validateSelection(DataType dataType, TableModel model) {
+			if (!(model instanceof RegistersTableModel rModel)) {
+				return false;
+			}
+			RegisterRow row = rModel.getModelData().get(table.getEditingRow());
 			if (row == null) {
 				return false;
 			}
@@ -455,12 +495,21 @@ public class DebuggerRegistersProvider extends ComponentProviderAdapter
 		}
 
 		@Override
-		protected DataType resolveSelection(DataType dataType) {
-			if (dataType == null) {
+		protected DataTypeManagerService getService(TableModel model) {
+			if (!(model instanceof RegistersTableModel rModel)) {
 				return null;
 			}
-			try (Transaction tx = currentTrace.openTransaction("Resolve DataType")) {
-				return currentTrace.getDataTypeManager().resolve(dataType, null);
+			return rModel.getServiceProvider().getService(DataTypeManagerService.class);
+		}
+
+		@Override
+		protected DataType resolveSelection(DataType dataType, TableModel model) {
+			if (dataType == null || !(model instanceof RegistersTableModel rModel)) {
+				return null;
+			}
+			Trace trace = rModel.getTrace();
+			try (Transaction tx = trace.openTransaction("Resolve DataType")) {
+				return trace.getDataTypeManager().resolve(dataType, null);
 			}
 		}
 	}
@@ -568,7 +617,7 @@ public class DebuggerRegistersProvider extends ComponentProviderAdapter
 
 	protected void buildMainPanel() {
 		regsTable = new GhidraTable(regsTableModel);
-		// TODO: Allow multiple selection for copy, etc.?
+		// LATER: Allow multiple selection for copy, etc.?
 		mainPanel.add(new JScrollPane(regsTable));
 		regsFilterPanel = new GhidraTableFilterPanel<>(regsTable, regsTableModel);
 		mainPanel.add(regsFilterPanel, BorderLayout.SOUTH);
@@ -601,12 +650,6 @@ public class DebuggerRegistersProvider extends ComponentProviderAdapter
 				}
 			}
 		});
-
-		TableColumnModel columnModel = regsTable.getColumnModel();
-		TableColumn valCol = columnModel.getColumn(RegisterTableColumns.VALUE.ordinal());
-		valCol.setCellEditor(new HexBigIntegerTableCellEditor());
-		TableColumn typeCol = columnModel.getColumn(RegisterTableColumns.TYPE.ordinal());
-		typeCol.setCellEditor(new RegisterDataTypeEditor());
 	}
 
 	@Override
@@ -1053,7 +1096,7 @@ public class DebuggerRegistersProvider extends ComponentProviderAdapter
 		if (previous.getThread() == null || current.getThread() == null) {
 			return false;
 		}
-		if (previous.getPlatform().getLanguage() != current.getPlatform().getLanguage()) {
+		if (previous.getLanguage() != current.getLanguage()) {
 			return false;
 		}
 		if (!isRegisterKnown(register)) {
@@ -1099,9 +1142,6 @@ public class DebuggerRegistersProvider extends ComponentProviderAdapter
 			result.add(pc);
 		}
 		for (Register reg : lang.getRegisters()) {
-			//if (reg.getGroup() != null) {
-			//	continue;
-			//}
 			if (reg.isProcessorContext()) {
 				continue;
 			}
@@ -1327,6 +1367,10 @@ public class DebuggerRegistersProvider extends ComponentProviderAdapter
 
 	public DebuggerCoordinates getCurrent() {
 		return current;
+	}
+
+	public DebuggerCoordinates getPrevious() {
+		return previous;
 	}
 
 	private void reportError(String title, String message, Throwable ex) {

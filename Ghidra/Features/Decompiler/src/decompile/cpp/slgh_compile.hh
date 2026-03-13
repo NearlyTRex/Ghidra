@@ -158,40 +158,40 @@ public:
     mutable int4 opttype; ///< 0 = register read by a COPY, 1 = register written by a COPY (-1 otherwise)
 
     /// \brief Construct a record, initializing counts
+    ///
+    /// \param offset is the starting offset of the temporary range
+    /// \param size is the number of bytes in the range
     OptimizeRecord(uintb offset, int4 size) {
       this->offset = offset;
       this->size = size;
       writeop = -1; readop = -1; inslot=-1; writecount=0; readcount=0; writesection=-2; readsection=-2; opttype=-1;
     }
-    void copyFromExcludingSize(OptimizeRecord &that);
-    void update(int4 opIdx, int4 slotIdx, int4 secNum);
-    void updateRead(int4 i, int4 inslot, int4 secNum);
-    void updateWrite(int4 i, int4 secNum);
-    void updateExport();
-    void updateCombine(OptimizeRecord &that);
+    OptimizeRecord(vector<OptimizeRecord *> &records);	///< Constructor merging the given overlapping records into a single record
+    void updateRead(int4 i, int4 inslot, int4 secNum);	///< Mark \b this range as being read by a specific op
+    void updateWrite(int4 i, int4 secNum);		///< Mark \b this range as being written by a specific op
+    void updateExport(void);				///< Mark \b this range as exported from the constructor
+    void updateCombine(OptimizeRecord &that);		///< Merge another record's read and write references into \b this
   };
 private:
+  /// \brief Container of OptimizeRecords for possibly overlapping temporary registers
   class UniqueState {
-    map<uintb,OptimizeRecord> recs;
-    static uintb endOf(map<uintb,OptimizeRecord>::iterator &iter) { return iter->first + iter->second.size; }
-    OptimizeRecord coalesce(vector<OptimizeRecord*> &records);
-    map<uintb,OptimizeRecord>::iterator lesserIter(uintb offset);
+    map<uintb,OptimizeRecord> recs;	///< Map from unique space offset to OptimizeRecord
+    static uintb endOf(map<uintb,OptimizeRecord>::iterator &iter) { return iter->first + iter->second.size; }	///< Get ending offset record
+    map<uintb,OptimizeRecord>::iterator lesserIter(uintb offset);	///< Get last record less than the given offset
   public:
-    void clear(void) { recs.clear(); }
-    void set(uintb offset, int4 size, OptimizeRecord &rec);
-    void getDefinitions(vector<OptimizeRecord*> &result, uintb offset, int4 size);
-    map<uintb,OptimizeRecord>::const_iterator begin(void) const { return recs.begin(); }
-    map<uintb,OptimizeRecord>::const_iterator end(void) const { return recs.end(); }
+    void clear(void) { recs.clear(); }					///< Clear all records
+    void set(OptimizeRecord &rec);					///< Add a new record to the collection
+    void getDefinitions(vector<OptimizeRecord*> &result, uintb offset, int4 size);	///< Get any definitions overlapping the given range
+    map<uintb,OptimizeRecord>::const_iterator begin(void) const { return recs.begin(); }	///< Get starting iterator to all records
+    map<uintb,OptimizeRecord>::const_iterator end(void) const { return recs.end(); }		///< Get ending iterator to all records
   };
 
   SleighCompile *compiler;	///< Parsed form of the SLEIGH file being examined
   int4 unnecessarypcode;	///< Count of unnecessary extension/truncation operations
   int4 readnowrite;		///< Count of temporary registers that are read but not written
   int4 writenoread;		///< Count of temporary registers that are written but not read
-  int4 largetemp;		///< Count of temporary registers that are too large
   bool printextwarning;		///< Set to \b true if warning emitted for each unnecessary truncation/extension
   bool printdeadwarning;	///< Set to \b true if warning emitted for each written but not read temporary
-  bool printlargetempwarning;	///< Set to \b true if warning emitted for each too large temporary
   SubtableSymbol *root_symbol;	///< The root symbol table for the parsed SLEIGH file
   vector<SubtableSymbol *> postorder;	///< Subtables sorted into \e post order (dependent tables listed earlier)
   map<SubtableSymbol *,int4> sizemap;	///< Sizes associated with table \e exports
@@ -223,7 +223,7 @@ private:
   void checkLargeTemporaries(Constructor *ct,ConstructTpl *ctpl);
   void optimize(Constructor *ct);
 public:
-  ConsistencyChecker(SleighCompile *sleigh, SubtableSymbol *rt,bool unnecessary,bool warndead, bool warnlargetemp);
+  ConsistencyChecker(SleighCompile *sleigh, SubtableSymbol *rt,bool unnecessary,bool warndead);
   bool testSizeRestrictions(void);		///< Test size consistency of all p-code
   bool testTruncations(void);			///< Test truncation validity of all p-code
   void testLargeTemporary(void);		///< Test for temporary Varnodes that are too large
@@ -231,7 +231,6 @@ public:
   int4 getNumUnnecessaryPcode(void) const { return unnecessarypcode; }	///< Return the number of unnecessary extensions and truncations
   int4 getNumReadNoWrite(void) const { return readnowrite; }	///< Return the number of temporaries read but not written
   int4 getNumWriteNoRead(void) const { return writenoread; }	///< Return the number of temporaries written but not read
-  int4 getNumLargeTemporaries(void) const {return largetemp;}	///< Return the number of \e too large temporaries
 };
 
 /// \brief Helper function holding properties of a \e context field prior to calculating the context layout
@@ -325,7 +324,6 @@ private:
   bool warnunnecessarypcode;		///< \b true if we warn of unnecessary ZEXT or SEXT
   bool warndeadtemps;			///< \b true if we warn of temporaries that are written but not read
   bool lenientconflicterrors;		///< \b true if we ignore most pattern conflict errors
-  bool largetemporarywarning;   	///< \b true if we warn about temporaries larger than SleighBase::MAX_UNIQUE_SIZE
   bool warnalllocalcollisions;		///< \b true if local export collisions generate individual warnings
   bool warnallnops;			///< \b true if pcode NOPs generate individual warnings
   bool failinsensitivedups;		///< \b true if case insensitive register duplicates cause error
@@ -387,11 +385,6 @@ public:
   ///
   /// \param val is \b true if the \b local keyword must always be used. The default is \b false.
   void setEnforceLocalKeyWord(bool val) { pcode.setEnforceLocalKey(val); }
-
-  /// \brief Set whether too large temporary registers generate warnings individually
-  ///
-  /// \param val is \b true if warnings are generated individually.  The default is \b false.
-  void setLargeTemporaryWarning (bool val) {largetemporarywarning = val;}
 
   /// \brief Set whether indistinguishable Constructor patterns generate fatal errors
   ///
@@ -466,6 +459,7 @@ public:
   SectionVector *nextNamedSection(SectionVector *vec,ConstructTpl *section,SectionSymbol *sym);
   SectionVector *finalNamedSection(SectionVector *vec,ConstructTpl *section);
   vector<OpTpl *> *createCrossBuild(VarnodeTpl *addr,SectionSymbol *sym);
+  ConstructTpl *enterSection(void);
   Constructor *createConstructor(SubtableSymbol *sym);
   bool isInRoot(Constructor *ct) const { return (root == ct->getParent()); }	///< Is the Constructor in the root table?
   void resetConstructors(void);
@@ -484,11 +478,9 @@ public:
   void setAllOptions(const map<string,string> &defines, bool unnecessaryPcodeWarning,
 		     bool lenientConflict, bool allCollisionWarning,
 		     bool allNopWarning,bool deadTempWarning,bool enforceLocalKeyWord,
-		     bool largeTemporaryWarning, bool caseSensitiveRegisterNames,bool debugOutput);
+		     bool caseSensitiveRegisterNames,bool debugOutput);
   int4 run_compilation(const string &filein,const string &fileout);
 };
-
-ostream& operator<<(ostream &os, const ConsistencyChecker::OptimizeRecord &rec);
 
 extern SleighCompile *slgh;		///< A global reference to the SLEIGH compiler accessible to the parse functions
 extern int yydebug;			///< Debug state for the SLEIGH parse functions

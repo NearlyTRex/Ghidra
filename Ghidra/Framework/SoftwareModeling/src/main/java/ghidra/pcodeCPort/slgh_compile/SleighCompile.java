@@ -168,6 +168,11 @@ public class SleighCompile extends SleighBase {
 		}
 
 		@Override
+		public ConstructTpl enterSection(Location where) {
+			return SleighCompile.this.enterSection(where);
+		}
+
+		@Override
 		public SectionVector standaloneSection(ConstructTpl c) {
 			return SleighCompile.this.standaloneSection(c);
 		}
@@ -331,6 +336,12 @@ public class SleighCompile extends SleighBase {
 		res.push_back(op);
 		sym.incrementRefCount();	// Keep track of the references to the section symbol
 		return res;
+	}
+
+	protected ConstructTpl enterSection(Location where) {
+		entry("enterSection", where);
+		pcode.resetLabelCount();
+		return new ConstructTpl(where);
 	}
 
 	protected SectionVector standaloneSection(ConstructTpl main) {
@@ -534,13 +545,6 @@ public class SleighCompile extends SleighBase {
 			reportWarning(null, "Use -t switch to list each individually");
 		}
 		checker.testLargeTemporary();
-		if ((!largetemporarywarning) && checker.getNumLargeTemporaries() > 0) {
-			reportWarning(null,
-				checker.getNumLargeTemporaries() +
-					" constructors contain temporaries larger than " + SleighBase.MAX_UNIQUE_SIZE +
-					" bytes.");
-			reportWarning(null, "Use -o switch to list each individually.");
-		}
 	}
 
 	private static int findCollision(Map<Long, Integer> local2Operand, ArrayList<Long> locals,
@@ -774,17 +778,6 @@ public class SleighCompile extends SleighBase {
 	public void setEnforceLocalKeyWord(boolean val) {
 		entry("setEnforceLocalKeyWord", val);
 		pcode.setEnforceLocalKey(val);
-	}
-
-	/**
-	 * Sets whether or not to print out warning info about
-	 * {@link Constructor}s which reference varnodes in the
-	 * unique space larger than {@link SleighBase#MAX_UNIQUE_SIZE}.
-	 * @param val whether to print info about contructors using large varnodes
-	 */
-	public void setLargeTemporaryWarning(boolean val) {
-		entry("setLargeTemporaryWarning", val);
-		largetemporarywarning = val;
 	}
 
 	public void setLenientConflict(boolean val) {
@@ -1791,11 +1784,26 @@ public class SleighCompile extends SleighBase {
 		return 0;
 	}
 
+	public void setOptions(SleighCompileOptions options) {
+		Set<Entry<String, String>> entrySet = options.preprocs.entrySet();
+		for (Entry<String, String> entry : entrySet) {
+			setPreprocValue(entry.getKey(), entry.getValue());
+		}
+		setUnnecessaryPcodeWarning(options.unnecessaryPcodeWarning);
+		setLenientConflict(options.lenientConflict);
+		setLocalCollisionWarning(options.allCollisionWarning);
+		setAllNopWarning(options.allNopWarning);
+		setDeadTempWarning(options.deadTempWarning);
+		setUnusedFieldWarning(options.unusedFieldWarning);
+		setEnforceLocalKeyWord(options.enforceLocalKeyWord);
+		setInsensitiveDuplicateError(!options.caseSensitiveRegisterNames);
+		setDebugOutput(options.debugOutput);
+	}
+
 	public void setAllOptions(Map<String, String> preprocs, boolean unnecessaryPcodeWarning,
 			boolean lenientConflict, boolean allCollisionWarning, boolean allNopWarning,
 			boolean deadTempWarning, boolean unusedFieldWarning, boolean enforceLocalKeyWord,
-			boolean largeTemporaryWarning, boolean caseSensitiveRegisterNames,
-			boolean debugOutput) {
+			boolean caseSensitiveRegisterNames, boolean debugOutput) {
 		Set<Entry<String, String>> entrySet = preprocs.entrySet();
 		for (Entry<String, String> entry : entrySet) {
 			setPreprocValue(entry.getKey(), entry.getValue());
@@ -1807,7 +1815,6 @@ public class SleighCompile extends SleighBase {
 		setDeadTempWarning(deadTempWarning);
 		setUnusedFieldWarning(unusedFieldWarning);
 		setEnforceLocalKeyWord(enforceLocalKeyWord);
-		setLargeTemporaryWarning(largeTemporaryWarning);
 		setInsensitiveDuplicateError(!caseSensitiveRegisterNames);
 		setDebugOutput(debugOutput);
 	}

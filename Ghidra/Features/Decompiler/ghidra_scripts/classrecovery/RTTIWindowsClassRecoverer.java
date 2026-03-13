@@ -1516,6 +1516,9 @@ public class RTTIWindowsClassRecoverer extends RTTIClassRecoverer {
 				highFunction, recoveredClass, constructor, vbtableOffset);
 
 			if (vbtableAddress != null) {
+				if (isInvalidVbtable(vbtableAddress)) {
+					continue;
+				}
 				return vbtableAddress;
 			}
 		}
@@ -1541,11 +1544,41 @@ public class RTTIWindowsClassRecoverer extends RTTIClassRecoverer {
 				highFunction, recoveredClass, constructor, vbtableOffset);
 
 			if (vbtableAddress != null) {
+				if (isInvalidVbtable(vbtableAddress)) {
+					continue;
+				}
 				return vbtableAddress;
 			}
 		}
 
 		return null;
+
+	}
+
+	private boolean isInvalidVbtable(Address address) {
+
+		// check to see if already has a non-default symbol that is not vbtable 
+		Symbol symbol = program.getSymbolTable().getPrimarySymbol(address);
+		if (symbol.getSource() != SourceType.DEFAULT &&
+			!symbol.getName().contains("vbtable")) {
+			return true;
+		}
+
+		// check to see if table contains an address reference
+		// if it is an address then is very unlikely this is a vbtable since
+		// it needs offset values and most are either large negatives (FFFFF....) or small offsets
+		// both of which are not valid addresses in a normal PE binary
+		Address referencedAddress = extendedFlatAPI.getPointer(address);
+
+		// if null then not an address so possibly valid
+		if (referencedAddress == null) {
+			return false;
+		}
+		// if is program memory location then invalid
+		if (program.getMemory().contains(referencedAddress)) {
+			return true;
+		}
+		return false;
 
 	}
 
@@ -2381,19 +2414,23 @@ public class RTTIWindowsClassRecoverer extends RTTIClassRecoverer {
 			Map<Integer, Address> classOffsetToVftableMap =
 				recoveredClass.getClassOffsetToVftableMap();
 			Set<Integer> classVftableOffsets = classOffsetToVftableMap.keySet();
-			List<Integer> sortedOffsets = new ArrayList<Integer>(classVftableOffsets);
-			Collections.sort(sortedOffsets);
 
-			Integer offset = sortedOffsets.get(0);
+			if (!classVftableOffsets.isEmpty()) {
 
-			Address vftableAddress = classOffsetToVftableMap.get(offset);
+				List<Integer> sortedOffsets = new ArrayList<Integer>(classVftableOffsets);
+				Collections.sort(sortedOffsets);
 
-			DataType classVftablePointer = vfPointerDataTypes.get(vftableAddress);
+				Integer offset = sortedOffsets.get(0);
 
-			// if it fits at offset or is at the end and class structure can be grown, 
-			// copy the whole baseClass structure to the class Structure at the given offset
-			EditStructureUtils.addDataTypeToStructure(classStructureDataType, offset.intValue(),
-				classVftablePointer, CLASS_VTABLE_PTR_FIELD_EXT, monitor);
+				Address vftableAddress = classOffsetToVftableMap.get(offset);
+
+				DataType classVftablePointer = vfPointerDataTypes.get(vftableAddress);
+
+				// if it fits at offset or is at the end and class structure can be grown, 
+				// copy the whole baseClass structure to the class Structure at the given offset
+				EditStructureUtils.addDataTypeToStructure(classStructureDataType, offset.intValue(),
+					classVftablePointer, CLASS_VTABLE_PTR_FIELD_EXT, monitor);
+			}
 		}
 
 		// add the vbtable structure for single inheritance/virt parent case

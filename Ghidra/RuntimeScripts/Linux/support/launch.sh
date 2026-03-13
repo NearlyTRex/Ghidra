@@ -93,8 +93,7 @@ if [[ ${INDEX} -lt 6 ]]; then
 fi
 
 # Sets SUPPORT_DIR to the directory that contains this file (launch.sh)
-SUPPORT_DIR="${0%/*}"
-
+SUPPORT_DIR="$(dirname -- "$0")"
 # Ensure Ghidra path doesn't contain illegal characters
 if [[ "${SUPPORT_DIR}" = *"!"* ]]; then
 	echo "Ghidra path cannot contain a \"!\" character."
@@ -104,14 +103,14 @@ fi
 if [ -f "${SUPPORT_DIR}/launch.properties" ]; then
 
 	# Production Environment
-	INSTALL_DIR="${SUPPORT_DIR}/.."
+	export INSTALL_DIR="${SUPPORT_DIR}/.."
 	CPATH="${INSTALL_DIR}/Ghidra/Framework/Utility/lib/Utility.jar"
 	LS_CPATH="${SUPPORT_DIR}/LaunchSupport.jar"
 	DEBUG_LOG4J="${SUPPORT_DIR}/debug.log4j.xml"
 else
 
 	# Development Environment (Eclipse classes or "gradle jar")
-	INSTALL_DIR="${SUPPORT_DIR}/../../../.."
+	export INSTALL_DIR="${SUPPORT_DIR}/../../../.."
 	CPATH="${INSTALL_DIR}/Ghidra/Framework/Utility/bin/main"
 	LS_CPATH="${INSTALL_DIR}/GhidraBuild/LaunchSupport/bin/main"
 	if ! [ -d "${LS_CPATH}" ]; then

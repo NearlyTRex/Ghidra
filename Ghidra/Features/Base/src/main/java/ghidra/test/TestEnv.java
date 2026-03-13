@@ -23,7 +23,7 @@ import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
-import org.jdom.Element;
+import org.jdom2.Element;
 
 import docking.ComponentProvider;
 import docking.DialogComponentProvider;
@@ -50,6 +50,7 @@ import ghidra.framework.plugintool.PluginTool;
 import ghidra.framework.plugintool.util.PluginException;
 import ghidra.framework.project.DefaultProjectManager;
 import ghidra.framework.protocol.ghidra.GhidraURL;
+import ghidra.program.database.ProgramBuilder;
 import ghidra.program.database.ProgramDB;
 import ghidra.program.model.data.FileDataTypeManager;
 import ghidra.program.model.lang.*;
@@ -1075,6 +1076,8 @@ public class TestEnv {
 		privateWaitForSwingRunnables();
 		programManager.disposeOpenPrograms();
 
+		ProgramBuilder.disposeAllBuilders();
+		
 		if (gp.getProject() == null) {
 			throw new IllegalStateException("The TestEnv's GhidraProject has already been closed!");
 		}

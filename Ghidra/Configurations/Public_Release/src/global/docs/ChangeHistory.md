@@ -1,3 +1,125 @@
+# Ghidra 12.0.4 Change History (March 2026)
+
+### Improvements
+* _Analysis_. Updated the RTTI Analyzer to better handle the case where class names cannot be demangled correctly. Previously, class members would end up in global namespace. Now, a class namespace with the mangled name will be created so that items in that class can be correctly grouped together. (GP-6431, Issue #8944)
+* _GUI_. Fixed a potential zip path traversal vulnerability when importing Ghidra theme zip files. (GP-6455)
+* _Scripting_. Improved RTTI Windows script vbtable discovery to recognize some invalid tables. (GP-6446, Issue #8944)
+
+### Bugs
+* _Analysis_. Fixed constant analysis performance issue with processors that have named instruction sections for crossbuilds. (GP-6424)
+* _Analysis_. Fixed an issue with constants from one function finding their way into another function that is jumped to, and in the middle of constant propagation, the jump is turned into a call. (GP-6442)
+* _Analysis_. Corrected analysis problem which failed to properly link thunk functions in the EXTERNAL memory block to existing External library symbols instead of creating new external functions in the unknown external library. (GP-6465)
+* _Bookmarks_. Corrected potential _"Missing bookmark table"_ exception which could occur if bookmarks were ever deleted. (GP-6517)
+* _Debugger_. Fixed a deadlock when saving Traces from the __Close Project__ dialog. (GP-6392)
+* _Debugger:Memory_. Fixed a bug in the Memory viewer when looking at multiple address spaces. (GP-6449, Issue #8982)
+* _Disassembly_. Refactored `PseudoDisassembler` to use the normal high level Disassembler instead of calling `Language.parse()`. (GP-6496)
+* _Exporter_. Enabled cancellation for SARIF exports. (GP-6469)
+* _Listing_. Fixed Listing display to show single string operands. (GP-6095)
+* _Processors_. Fixed the semantics of the AARCH64 `ldpsw` instruction. (GP-5590, Issue #6469, #8008)
+* _Processors_. Fixed issue with PIC-18 instructions double-incrementing/decrementing. (GP-6004, Issue #3342, #8501)
+* _Processors_. Corrected Xtensa slapsec token field naming. (GP-6080)
+* _Processors_. Corrected semantics for the CR16 `tbit` instruction. (GP-6181, Issue #8716)
+* _Processors_. Corrected mnemonic and semantics for eBPF atomic compare-and-exchange instructions. (GP-6182, Issue #8721)
+* _Processors_. Added missing definition for PowerPC Altivec `vadduws` instruction that was mistakenly commented out. (GP-6268, Issue #8821)
+* _Processors_. Added support for AARCH64 Common Short Sequence Compression (CSSC) instructions. (GP-6448, Issue #8973, #8979)
+* _Processors_. Fixed semantics of AARCH64 `ldar` instruction. (GP-6473, Issue #6467, #8014)
+* _Processors_. Corrected disassembly for MIPS instruction `sdbbp16`. (GP-6489)
+* _Processors_. Added MIPS32 `save` and `restore` instructions, and refactored coprocessor register read/write. (GP-6501)
+
+### Notable API Changes
+* _GUI_. (GP-6480) The resultsLimit and minLength parameters of the AddressRangeTableModel constructor have been removed.
+
+# Ghidra 12.0.3 Change History (February 2026)
+
+### New Features
+* _Listing_. In order to mitigate possible security risks, auto comments will not longer render annotations in such a way as to make them valid annotation links.  Normal comments will continue to work as usual. (GP-6414)
+
+### Improvements
+* _Demangler_. The __Demangler GNU__ analyzer now has a timeout option. (GP-6408)
+* _GUI_. Corrected Ghidra GUI to fail-fast in headless environment and avoid stack traces. (GP-6399)
+* _Listing_. The `@execute` annotation is no longer supported. (GP-6413)
+
+### Bugs
+* _Data Types_. Corrected multi-user merge issues related to non-packed structures which could negatively affect merge results. (GP-6320, Issue #8776)
+* _Debugger_. Fixed a `NullPointerException` that could occur upon closing the Debugger. (GP-6376)
+* _Debugger:Breakpoints_. Fixed an issue where restarting a target (e.g., the `run` command from GDB's CLI) caused duplicate breakpoint entries and GUI glitches. (GP-6027)
+* _Decompiler_. Fixed _"PTRSUB off of non structured pointer type"_ exceptions caused by `void *` data-type. (GP-6388, Issue #8887)
+* _Decompiler_. Fixed source of _"Forced merge caused intersection"_ exceptions when decompiling optimized string copies. (GP-6393, Issue #8651)
+* _Multi-User_. Revised Ghidra Server self-signed certificate generation to include all associated FQDNs and IP addresses as subject alternative names.  This will address the forced hostname check imposed with the release of JDK 21.0.10.  To benefit from this change the Ghidra Server will need to be upgraded to this release.  A client-side workaround is to set the following JVM property within `support/launch.properties` by adding the line: `VMARGS=-Djdk.rmi.ssl.client.enableEndpointIdentification=false`. (GP-6426, Issue #8940)
+* _Processors_. Fixed bug in AARCH64 `sha1h` instruction to shift instead of rotate bits. (GP-4501, Issue #6398)
+* _Processors_. Fixed 80251 disassembly errors for instructions referencing the SPX register. (GP-5905, Issue #8395)
+* _Processors_. Fixed disassembly of MIPS16e2 `lui` instruction to only parse on extended words. (GP-6419)
+* _Search_. Fixed a memory leak in the `Find References...` action. (GP-6395, Issue #8921)
+
+### Notable API Changes
+* _Data Types_. (GP-6320) Structure offset-based insert methods `Structure.insertAtOffset` will now skip forward over existing zero-length components at the insert offset before performing insert of new component.
+
+# Ghidra 12.0.2 Change History (January 2026)
+
+### New Features
+* _Emulator_. Fixed the Emulator's evaluation of `inst_next2`. (GP-6134, Issue #8646)
+
+### Improvements
+* _Basic Infrastructure_. Upgraded `commons-lang3` , `log4j`, and `postgresql` jars. (GP-6243)
+* _Debugger_. Several Address and Value columns are now displayed in fixed-width font: Register Value, Stack PC, Snapshot PC, and Watch Value. (GP-6025)
+* _Debugger:Breakpoints_. Added __Expression__ column to __Breakpoints__ locations table. (GP-6026)
+* _Documentation_. Updated Debugger tutorial to reflect the addition of the Comment column to the Watches panel, and the moving of the schedule display to trace tabs instead of the Threads panel title bar. (GP-6032)
+* _Extensions_. Fixed a potential zip path traversal vulnerability when unzipping Ghidra Extension archives. (GP-6354)
+* _Multi-User_. Upgraded yajsw to 13.18. (GP-6364)
+
+### Bugs
+* _Data Types_. Corrected a Union update notification issue which impacted proper archive sync indicators and related operations. (GP-6359, Issue #8884)
+* _Debugger_. Fixed missing __Dynamic Listing__ entry in Window menu, when the Dynamic Listing is closed. (GP-6086, Issue #8604)
+* _Debugger:Emulator_. Fixed a silent infinite-read loop during some situations in an emulator forked from a live target. (GP-6340)
+* _Demangler_. Fixed Gnu Demangler failure to parse a global guard variable. (GP-6371, Issue #8900)
+* _GUI_. Updated the Symbol Tree's filter to fix an issue that sometimes caused it to not get painted. (GP-6366, Issue #2448)
+* _Processors_. Corrected AARCH64 `ldapr` instruction semantics to properly read memory. (GP-6358, Issue #6593)
+* _Processors_. Corrected PowerPC VLE `se_blrl` instruction semantics. (GP-6379, Issue #6207)
+* _Processors_. Corrected issue with ARM `ldrexd` instruction when the operands are the same register. (GP-6381, Issue #6590)
+
+### Notable API Changes
+* _Debugger:Emulator_. (GP-6340) Removed `PcodeTraceDataAccess.intersectUnknown` in favor of `intersectViewKnown` with sutract.
+* _Emulator_. (GP-6134) Added `InstructionPrototype.hasNext2Dependency()`.
+
+# Ghidra 12.0.1 Change History (January 2026)
+
+### Improvements
+* _Build_. Upgraded Ghidra's local copies of the `packaging`, `setuptools`, and `wheel` Python wheels. (GP-6284, Issue #8852)
+* _CodeBrowser_. Fixed an issue with stack depth following across indirect function calls which would occur in windows external indirect calls. (GP-6315, Issue #8837)
+* _Debugger:Emulator_. The emulator will now use the nearest snapshot, allowing it to resume more quickly after restarting Ghidra. (GP-6236, Issue #8767)
+* _Debugger:Time_. Invalidated rows in Time Panel are now displayed in gray. This is to indicate that navigating to it will require re-emulation. (GP-6244)
+* _Decompiler_. Added abstract interpretation via the Software and System Verification (SSV) group @ Università Ca' Foscari's Library for Static Analysis (LiSA).  This capability was meant for the previous release, as noted in the 12.0 Change History. (GP-6225)
+
+### Bugs
+* _Assembler_. Fixed issue preventing some PPC VLE instructions from assembling. (GP-6109, Issue #8624)
+* _Assembler_. Fixed an issue with Assembler corrupting instructions that followed, especially when ISA mode is involved. (GP-6295, Issue #8826)
+* _Debugger:Emulator_. Fixed some crash cases in Taint emulator regarding mismatched op sizes. (GP-6287)
+* _Debugger:Emulator_. Fixed issues in P-code Stepper: Uniques table crashed if unique was not yet written. Stepping backward emptied p-code listing and uniques table. (GP-6294)
+* _Debugger:Emulator_. Fixed a `NullPointerException` in the emulation service when forking from a live target. (GP-6298)
+* _Decompiler_. Fixed a Decompiler bug that caused _"Deleting op with descendants"_ exceptions. (GP-6090, Issue #8594)
+* _Decompiler_. Fixed Decompiler bug that occurred when splitting LOAD and STORE operations of laned registers. (GP-6130, Issue #8620)
+* _Decompiler_. Fixed bug preventing the display of a nested field access when using an offset pointer. (GP-6133, Issue #8630)
+* _Decompiler_. Fixed a Decompiler regression that caused _"Free varnode has multiple descendants"_ exceptions. (GP-6201, Issue #8743)
+* _Decompiler_. Fixed a bug in the Decompiler producing _"PTRSUB off of non structured pointer type"_ exceptions. (GP-6224, Issue #8745)
+* _Emulator_. Corrected regression error to pcode emulation for cases where named pcodeops were used (i.e., CALLOTHER pcodeop) and argument indexing within the java pcode implementation was incorrect. (GP-6229)
+* _Emulator_. Fixed crash seen in P-code Stepper when reading a unique varnode before it is written. (GP-6253)
+* _GUI_. Fixed a `NullPointerException` in function graph middle-mouse highlighter. (GP-6254, Issue #8798)
+* _Importer:ELF_. Corrected improper ELF relocation processing for PowerPC-32 types `R_PPC_ADDR16_HA(6)` and `R_PPC_ADDR16_LO(4)`. (GP-6329)
+* _Listing_. Fixed a Listing bug that caused text, copied from the memory block header, to be off by one character. (GP-6263, Issue #8797)
+* _Processors_. Fixed operand consistency issue in M68000 processor. (GP-5334, Issue #4358)
+* _Scripting_. Fixed issue in `RecoverClassesFromRTTIScript` where it could get into an infinite loop if the option to shorten template names in structures is set and there are exact template names in multiple parent namespaces. (GP-6183, Issue #8199)
+* _Scripting_. Fixed a PyGhidra `AttributeError` when performing a `from pyghidra import *`. (GP-6241, Issue #8789)
+* _Scripting_. Released PyGhidra 3.0.2, which contains fixes to `pyghidra.analysis_properties()` and exceptions being inadvertently squashed by some API functions. (GP-6283, Issue #8018)
+* _Scripting_. PyGhidra should now always exit the Python processes cleanly, no longer being kept alive by a potentially running task monitor timer. (GP-6301, Issue #8858)
+* _Sleigh_. Corrected Sleigh compiler regression error affecting unique subpiece semantics for certain cases which produced invalid unique varnode offsets. (GP-6237, Issue #8784)
+* _Terminal_. Implemented `repeat the preceding graphics character (REP)` (`CSI Ps b`) terminal code logic, as such sequences were breaking the Terminal. (GP-6191)
+
+### Notable API Changes
+* _BSim_. (GP-6250) The `ghidra.net.ApplicationSSLSocketFactory` has been replaced by `ghidra.net.DefaultSSLSocketFactory`.  This is currently used by BSim when communicating with a <I>postgresql</I> server.
+* _Debugger:Emulator_. (GP-6236) Added `TraceTimeManager.findSnapshotWithNearestPrefix()`. Several new methods in `TraceSchedule`, including: `hasPSteps`, `stepCount`, `dropLastStep`, `lastStep`, `truncateToSteps`.
+* _Debugger:Emulator_. (GP-6298) Added `TraceSnapshot.isSnapOnly()` and `.isStale()`.
+* _Emulator_. (GP-6229) The emulation support method for CALLOTHER `OpBehaviorOther.evaluate` implementations has dropped the first input varnode which was used to identify the `OpBehaviorOther` implementation.  Only the inputs which are specified by the arguments passed to the named pcodeop within the slapsec are now passed to this method.  NOTE: The actual API change occurred within Ghidra 11.3 with GP-4643 change.
+
 # Ghidra 12.0 Change History (December 2025)
 
 ### New Features

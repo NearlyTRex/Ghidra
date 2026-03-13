@@ -76,13 +76,11 @@ import ghidra.util.task.UnknownProgressWrappingTaskMonitor;
  * </ul>
  */
 public class GoRttiMapper extends DataTypeMapper implements DataTypeMapperContext {
-	public static final GoVerRange SUPPORTED_VERSIONS = GoVerRange.parse("1.15-1.25");
+	public static final GoVerRange SUPPORTED_VERSIONS = GoVerRange.parse("1.15-1.26");
 
 	private static final List<String> SYMBOL_SEARCH_PREFIXES = List.of("", "_" /* macho symbols */);
 	private static final List<String> SECTION_PREFIXES =
 		List.of("." /* ELF */, "__" /* macho sections */);
-
-	private static final String FAILED_FLAG = "FAILED TO FIND GOLANG BINARY";
 
 	/**
 	 * Returns a shared {@link GoRttiMapper} for the specified program, or null if the binary
@@ -102,10 +100,6 @@ public class GoRttiMapper extends DataTypeMapper implements DataTypeMapperContex
 	 * 
 	 */
 	public static GoRttiMapper getSharedGoBinary(Program program, TaskMonitor monitor) {
-		if (TransientProgramProperties.hasProperty(program, FAILED_FLAG)) {
-			// don't try to do any work if we've failed earlier
-			return null;
-		}
 		GoRttiMapper goBinary = TransientProgramProperties.getProperty(program, GoRttiMapper.class,
 			TransientProgramProperties.SCOPE.ANALYSIS_SESSION, GoRttiMapper.class, () -> {
 				// cached instance not found, create new instance
@@ -127,10 +121,6 @@ public class GoRttiMapper extends DataTypeMapper implements DataTypeMapperContex
 					Msg.error(GoRttiMapper.class, "Failed to read Go info", e);
 					logAnalyzerMsg(program, e.getMessage());
 				}
-
-				// this sets the failed flag
-				TransientProgramProperties.getProperty(program, FAILED_FLAG,
-					TransientProgramProperties.SCOPE.PROGRAM, Boolean.class, () -> true);
 
 				return null;
 			});
@@ -161,6 +151,12 @@ public class GoRttiMapper extends DataTypeMapper implements DataTypeMapperContex
 	public static GoRttiMapper getGoBinary(Program program, TaskMonitor monitor)
 			throws BootstrapInfoException, IOException {
 		GoBuildInfo buildInfo = GoBuildInfo.fromProgram(program);
+		if (buildInfo == null || buildInfo.getGoVer().isInvalid()) {
+			GoBuildInfo fallbackBI = GoBuildInfo.fromFallbackInfo(program);
+			if (fallbackBI != null) {
+				buildInfo = fallbackBI;
+			}
+		}
 		if (buildInfo == null) {
 			// probably not a Go binary
 			return null;

@@ -228,12 +228,12 @@ def program_loader() -> "ProgramLoader.Builder":
 ```python
 def task_monitor(
         timeout: Optional[int] = None
-    ) -> "PyGhidraTaskMonitor":
+    ) -> "TaskMonitor":
     """
-    Convenience function to get a "PyGhidraTaskMonitor" object.
+    Convenience function to get a "TaskMonitor" object.
 
     :param timeout: An optional number of seconds to wait before canceling the monitor.
-    :return: A "PyGhidraTaskMonitor"  object.
+    :return: A "TaskMonitor" object.
     """
 ```
 
@@ -567,10 +567,25 @@ import pdb   # imports Python's pdb
 import pdb_  # imports Ghidra's pdb
 ```
 ## Change History
+__3.1.0__
+* PyGhidra will now, by default, restore `sys.modules` to its prior state after a PyGhidra script is
+  run (or the interactive interpreter is reset) so the next time a script is run, it freshly loads
+  all of its imported modules again. This default behavior can be disabled by setting the
+  `pyghidra.sys.modules.restore.disable` Java system property to `true`, which can be done in the
+  `support/launch.properties` file.
+* `ghidra_launch.py` now correctly prioritizes user-defined JVM properties higher than those defined
+  in `support/launch.properties`.
+* PyGhidra now includes a 
+  [`py.typed`](https://typing.python.org/en/latest/spec/distributing.html#packaging-type-information)
+  marker file to inform type checkers that typing is supported.
+* The PyGhidra interactive console no longer restarts when a `SyntaxError` occurs.
+
 __3.0.2__
 * Fixed an issue that prevented [`pyghidra.analysis_properties()`](#pyghidraanalysis_properties)
   from having access to all of the analysis properties.
-* Fixed issues related to the PyGhidra API inadvertently squashing exceptions
+* Fixed issues related to the PyGhidra API inadvertently squashing exceptions.
+* Calling [`pyghidra.task_monitor()`](#pyghidratask_monitor) with no `timeout` parameter will now
+  return a `TaskMonitor.DUMMY` instead of a `PyGhidraTaskMonitor`. 
 
 __3.0.1__
 * Fixed `AttributeError: module 'pyghidra' has no attribute 'program_conext'` when performing a
